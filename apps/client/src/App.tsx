@@ -12,7 +12,6 @@ import {
   LoaderCircle,
   Pause,
   Play,
-  RefreshCw,
   RotateCcw,
   Trash2,
   Upload,

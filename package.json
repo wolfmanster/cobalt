@@ -3,5 +3,14 @@
     "packageManager": "pnpm@9.6.0",
     "engines": {
         "pnpm": ">=9"
+    },
+    "scripts": {
+        "start:api": "pnpm --dir api start",
+        "test:api": "pnpm --dir api test",
+        "dev": "pnpm --parallel --filter @x-media/server --filter @x-media/client dev",
+        "dev:cobalt": "pnpm --dir api start",
+        "build": "pnpm --filter @x-media/server build && pnpm --filter @x-media/client build",
+        "test": "pnpm --filter @x-media/server test",
+        "start": "pnpm --filter @x-media/server start"
     }
 }

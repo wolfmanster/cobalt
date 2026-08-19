@@ -2,7 +2,7 @@ import cors from "cors";
 import http from "node:http";
 import rateLimit from "express-rate-limit";
 import { setGlobalDispatcher, EnvHttpProxyAgent } from "undici";
-import { getCommit, getBranch, getRemote, getVersion } from "@imput/version-info";
+import { getCommit, getBranch, getRemote, getVersion } from "../../../packages/version-info/index.js";
 
 import jwt from "../security/jwt.js";
 import stream from "../stream/stream.js";

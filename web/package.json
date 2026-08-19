@@ -29,7 +29,6 @@
         "@fontsource/redaction-10": "^5.2.5",
         "@imput/libav.js-encode-cli": "6.8.7",
         "@imput/libav.js-remux-cli": "^6.8.7",
-        "@imput/version-info": "workspace:^",
         "@sveltejs/adapter-static": "^3.0.10",
         "@sveltejs/kit": "^2.55.0",
         "@sveltejs/vite-plugin-svelte": "^6.2.1",

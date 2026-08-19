@@ -15,6 +15,7 @@ node_modules
 build
 dist
 data
+Android/cmdline-tools/
 !Android/project/app/src/main/kotlin/com/xmedia/archive/data/
 !Android/project/app/src/main/kotlin/com/xmedia/archive/data/**
 *.tsbuildinfo

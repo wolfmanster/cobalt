@@ -142,7 +142,17 @@ function JobCard({ job, onAction }: { job: DownloadJob; onAction: (action: 'canc
         <div className="job-actions">
           {active && <button className="text-button danger-text" onClick={() => onAction('cancel', job.id)}><X size={15} />取消</button>}
           {(job.status === 'failed' || job.status === 'canceled') && <button className="text-button" onClick={() => onAction('retry', job.id)}><RotateCcw size={14} />重试</button>}
-          {complete && <a className="text-button" href={job.media[0]?.downloadUrl}><ArrowDownToLine size={15} />{job.media.length > 1 ? '逐个下载' : '下载文件'}</a>}
+          {complete && <a
+            className="text-button"
+            href={job.media[0]?.downloadUrl}
+            onClick={(event) => {
+              const firstMedia = job.media[0];
+              if (firstMedia?.downloadUrl.startsWith('content:')) {
+                event.preventDefault();
+                void openMedia(firstMedia.id);
+              }
+            }}
+          ><ArrowDownToLine size={15} />{job.media.length > 1 ? '逐个下载' : '下载文件'}</a>}
         </div>
       </footer>
     </article>

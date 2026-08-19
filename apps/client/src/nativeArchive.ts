@@ -13,6 +13,7 @@ export interface LocalArchivePlugin {
   clearHistory(): Promise<{ removed: number }>;
   getHealth(): Promise<{ ok: boolean; local: boolean }>;
   openMedia(input: { id: string }): Promise<void>;
+  openMediaFolder(): Promise<void>;
   shareMedia(input: { id: string }): Promise<void>;
   addListener(eventName: 'jobsChanged', listenerFunc: (event: { jobs: DownloadJob[] }) => void): Promise<PluginListenerHandle>;
 }

@@ -59,6 +59,7 @@ class DownloadForegroundService : Service() {
 
     private suspend fun runQueue() {
         try {
+            repository.requeueInterrupted()
             while (true) {
                 val jobs = ArchiveDatabase.get(this).dao().listJobs().filter { it.status == JobStatus.QUEUED.name.lowercase() }
                 if (jobs.isEmpty()) break

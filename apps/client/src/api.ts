@@ -44,7 +44,7 @@ export function clearHistory() {
 }
 
 export function openMediaFolder() {
-  if (native) return Promise.resolve({ ok: true as const });
+  if (native) return LocalArchive.openMediaFolder().then(() => ({ ok: true as const }));
   return request<{ ok: true }>('/api/open-media-folder', { method: 'POST' });
 }
 

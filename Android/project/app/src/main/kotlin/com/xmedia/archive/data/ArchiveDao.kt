@@ -42,6 +42,9 @@ interface ArchiveDao {
     @Query("DELETE FROM media WHERE jobId NOT IN (SELECT id FROM jobs)")
     suspend fun deleteOrphanMedia()
 
+    @Query("UPDATE jobs SET status = 'queued', progress = 0, error = NULL, updatedAt = :updatedAt WHERE status IN ('resolving', 'downloading')")
+    suspend fun requeueInterrupted(updatedAt: String): Int
+
     @Transaction
     suspend fun replaceMedia(jobId: String, media: List<MediaEntity>) {
         deleteMedia(jobId)

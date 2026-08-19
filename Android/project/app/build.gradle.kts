@@ -31,7 +31,21 @@ android {
 
     kotlinOptions { jvmTarget = "1.8" }
 
-    sourceSets["main"].assets.srcDir("../../../apps/client/dist")
+    val clientDist = file("../../../apps/client/dist")
+    val webAssets = layout.buildDirectory.dir("generated/web-assets")
+    val prepareWebAssets = tasks.register<Sync>("prepareWebAssets") {
+        from(clientDist)
+        into(webAssets.map { it.dir("public") })
+        doFirst {
+            check(clientDist.isDirectory) {
+                "Client assets are missing. Run 'pnpm --dir apps/client build' first."
+            }
+        }
+    }
+
+    sourceSets["main"].assets.srcDir(webAssets)
+    tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }
+        .configureEach { dependsOn(prepareWebAssets) }
 }
 
 dependencies {

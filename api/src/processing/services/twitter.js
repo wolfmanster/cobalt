@@ -297,7 +297,7 @@ export default async function({ id, index, toGif, dispatcher, alwaysProxy, subti
                     type: "proxy",
                     isPhoto: true,
                     filename: `twitter_${id}.${getFileExt(mediaItem.media_url_https)}`,
-                    urls: `${mediaItem.media_url_https}?name=4096x4096`
+                    urls: `${mediaItem.media_url_https}?name=orig`
                 }
             }
 
@@ -329,7 +329,7 @@ export default async function({ id, index, toGif, dispatcher, alwaysProxy, subti
 
             const picker = media.map((content, i) => {
                 if (content.type === "photo") {
-                    let url = `${content.media_url_https}?name=4096x4096`;
+                    let url = `${content.media_url_https}?name=orig`;
                     let proxiedImage = proxyThumb(url, i);
 
                     if (alwaysProxy) url = proxiedImage;

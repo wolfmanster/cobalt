@@ -2,15 +2,16 @@ package com.xmedia.archive.plugin
 
 import android.content.Intent
 import android.net.Uri
-import android.os.Build
-import android.provider.DocumentsContract
+import androidx.activity.result.ActivityResult
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
 import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.CapacitorPlugin
+import com.getcapacitor.annotation.ActivityCallback
 import com.xmedia.archive.repository.ArchiveRepository
 import com.xmedia.archive.service.DownloadForegroundService
+import com.xmedia.archive.storage.DownloadDestination
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -47,6 +48,10 @@ class LocalArchivePlugin : Plugin() {
             call.reject("请提供 1–200 条帖子链接")
             return
         }
+        if (!DownloadDestination.hasSelectedFolder(context)) {
+            call.reject("请先选择下载文件夹")
+            return
+        }
         scope.launch {
             val result = repository.createJobs(urls)
             DownloadForegroundService.start(context)
@@ -77,26 +82,37 @@ class LocalArchivePlugin : Plugin() {
     fun openMedia(call: PluginCall) = launchMediaIntent(call, Intent.ACTION_VIEW)
 
     @PluginMethod
-    fun openMediaFolder(call: PluginCall) {
+    fun selectDownloadFolder(call: PluginCall) {
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
             addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                putExtra(
-                    DocumentsContract.EXTRA_INITIAL_URI,
-                    DocumentsContract.buildTreeDocumentUri(
-                        "com.android.externalstorage.documents",
-                        "primary:Download/X Media Archive",
-                    ),
-                )
-            }
         }
+        startActivityForResult(call, intent, "onDownloadFolderSelected")
+    }
+
+    @PluginMethod
+    fun getDownloadFolder(call: PluginCall) {
+        call.resolve(JSObject().put("selected", DownloadDestination.hasSelectedFolder(context)))
+    }
+
+    @ActivityCallback
+    private fun onDownloadFolderSelected(call: PluginCall?, result: ActivityResult) {
+        if (call == null) return
+        val uri = result.data?.data
+        if (result.resultCode != android.app.Activity.RESULT_OK || uri == null) {
+            call.resolve(JSObject().put("selected", false))
+            return
+        }
+        val flags = result.data?.flags?.and(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            ?: (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
         runCatching {
-            context.startActivity(intent)
-            call.resolve()
+            context.contentResolver.takePersistableUriPermission(uri, flags)
+            DownloadDestination.saveTreeUri(context, uri)
+        }.onSuccess {
+            call.resolve(JSObject().put("selected", true).put("uri", uri.toString()))
         }.onFailure { error ->
-            call.reject(error.message ?: "无法打开媒体文件夹")
+            call.reject(error.message ?: "无法保存下载文件夹权限")
         }
     }
 

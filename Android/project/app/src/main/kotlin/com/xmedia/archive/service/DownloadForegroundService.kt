@@ -5,12 +5,10 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
-import android.content.ContentValues
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.IBinder
-import android.provider.MediaStore
 import androidx.core.app.NotificationCompat
 import com.xmedia.archive.MainActivity
 import com.xmedia.archive.R
@@ -20,6 +18,8 @@ import com.xmedia.archive.data.JobStatus
 import com.xmedia.archive.data.MediaEntity
 import com.xmedia.archive.repository.ArchiveRepository
 import com.xmedia.archive.resolver.XPostResolver
+import com.xmedia.archive.storage.ArchivePaths
+import com.xmedia.archive.storage.DownloadDestination
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -114,8 +114,16 @@ class DownloadForegroundService : Service() {
             coroutineContext.ensureActive()
             if (canceledJobs.contains(job.id)) throw CancellationException("任务已取消")
             val media = resolved.media.map {
-                MediaEntity(it.id, job.id, it.kind, it.filename, sourceUrl = it.sourceUrl, position = it.position)
+                MediaEntity(
+                    it.id,
+                    job.id,
+                    it.kind,
+                    ArchivePaths.mediaFilename(it.filename, it.kind, it.position),
+                    sourceUrl = it.sourceUrl,
+                    position = it.position,
+                )
             }
+            val mediaDirectory = ArchivePaths.postDirectory(resolved.metadata, job.tweetId)
             job = job.copy(
                 status = JobStatus.DOWNLOADING.name.lowercase(),
                 progress = 12,
@@ -129,7 +137,7 @@ class DownloadForegroundService : Service() {
             )
             repository.update(job)
             repository.replaceMedia(job.id, media)
-            media.forEachIndexed { index, item -> download(job, item, index, media.size) }
+            media.forEachIndexed { index, item -> download(job, item, index, media.size, mediaDirectory) }
             job = repository.getJob(job.id) ?: job
             if (job.status != JobStatus.CANCELED.name.lowercase() && !canceledJobs.contains(job.id)) {
                 repository.update(job.copy(status = JobStatus.COMPLETED.name.lowercase(), progress = 100, completedAt = Instant.now().toString()))
@@ -145,24 +153,14 @@ class DownloadForegroundService : Service() {
         }
     }
 
-    private suspend fun download(job: JobEntity, item: MediaEntity, index: Int, count: Int) {
+    private suspend fun download(job: JobEntity, item: MediaEntity, index: Int, count: Int, mediaDirectory: String) {
         val request = Request.Builder().url(item.sourceUrl).header("User-Agent", "x-media-archive/0.1 Android").build()
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) throw IllegalStateException("媒体下载失败（HTTP ${response.code}）")
             val body = response.body ?: throw IllegalStateException("媒体响应为空")
             val total = body.contentLength().takeIf { it > 0 }
             val contentType = body.contentType()?.toString() ?: mimeFor(item.filename)
-            val collection = when (item.kind) {
-                "image", "gif" -> MediaStore.Images.Media.EXTERNAL_CONTENT_URI
-                else -> MediaStore.Video.Media.EXTERNAL_CONTENT_URI
-            }
-            val values = ContentValues().apply {
-                put(MediaStore.MediaColumns.DISPLAY_NAME, item.filename)
-                put(MediaStore.MediaColumns.MIME_TYPE, contentType)
-                put(MediaStore.MediaColumns.RELATIVE_PATH, "Download/X Media Archive")
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) put(MediaStore.MediaColumns.IS_PENDING, 1)
-            }
-            val uri = contentResolver.insert(collection, values) ?: throw IllegalStateException("无法创建媒体文件")
+            val uri = DownloadDestination.createTarget(this, mediaDirectory, item.filename, contentType)
             try {
                 ArchiveDatabase.get(this).dao().upsertMedia(listOf(item.copy(contentType = contentType, mediaStoreUri = uri.toString())))
                 contentResolver.openOutputStream(uri)?.use { output ->
@@ -186,9 +184,6 @@ class DownloadForegroundService : Service() {
                         ArchiveDatabase.get(this).dao().upsertMedia(listOf(updated))
                     }
                 } ?: throw IllegalStateException("无法写入媒体文件")
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    contentResolver.update(uri, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null)
-                }
             } catch (error: Exception) {
                 contentResolver.delete(uri, null, null)
                 throw error
@@ -206,7 +201,7 @@ class DownloadForegroundService : Service() {
 
     private fun notification(text: String, progress: Int): Notification = NotificationCompat.Builder(this, CHANNEL_ID)
         .setSmallIcon(android.R.drawable.stat_sys_download)
-        .setContentTitle("X 媒体存档")
+        .setContentTitle("Veo Downloader")
         .setContentText(text)
         .setContentIntent(PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))
         .setOngoing(true)

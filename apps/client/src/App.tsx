@@ -20,7 +20,7 @@ import {
   X,
   Zap,
 } from 'lucide-react';
-import { cancelJob, clearHistory, createJobs, listJobs, openMedia, openMediaFolder, retryJob, subscribeJobs } from './api';
+import { cancelJob, clearHistory, createJobs, getDownloadFolder, listJobs, openMedia, retryJob, selectDownloadFolder, subscribeJobs } from './api';
 import type { DownloadJob, JobStatus, MediaItem } from './types';
 
 const STATUS: Record<JobStatus, { label: string; className: string }> = {
@@ -166,7 +166,7 @@ export default function App() {
   const [submitting, setSubmitting] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [notice, setNotice] = useState('');
-  const [openingFolder, setOpeningFolder] = useState(false);
+  const [choosingFolder, setChoosingFolder] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const urls = useMemo(() => extractUrls(input), [input]);
 
@@ -198,6 +198,13 @@ export default function App() {
     if (!urls.length) return setNotice('请先粘贴至少一条 X 帖子链接');
     setSubmitting(true);
     try {
+      if (!(await getDownloadFolder()).selected) {
+        const selected = await selectDownloadFolder();
+        if (!selected.selected) {
+          setNotice('请选择下载文件夹后再加入队列');
+          return;
+        }
+      }
       const result = await createJobs(urls);
       setInput('');
       setTab('queue');
@@ -225,14 +232,15 @@ export default function App() {
     setNotice(`已清除 ${removed} 条历史记录`);
   }
 
-  async function showMediaFolder() {
-    setOpeningFolder(true);
+  async function chooseDownloadFolder() {
+    setChoosingFolder(true);
     try {
-      await openMediaFolder();
+      const result = await selectDownloadFolder();
+      if (result.selected) setNotice('已保存下载文件夹；新任务将写入该文件夹');
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : '无法打开媒体文件夹');
+      setNotice(error instanceof Error ? error.message : '无法选择下载文件夹');
     } finally {
-      setOpeningFolder(false);
+      setChoosingFolder(false);
     }
   }
 
@@ -244,17 +252,17 @@ export default function App() {
   return (
     <div className="app-shell">
       <header className="topbar">
-        <a className="brand" href="#top"><span className="brand-mark">𝕏</span><span>X 媒体存档<small>PUBLIC MEDIA ARCHIVE</small></span></a>
+        <a className="brand" href="#top"><span className="brand-mark">▶</span><span>Veo Downloader<small>VIDEO DOWNLOADER</small></span></a>
         <div className="topbar-actions">
           <button
             className="folder-button"
             type="button"
-            title="打开媒体文件夹"
-            onClick={() => void showMediaFolder()}
-            disabled={openingFolder}
+            title="选择或更改下载文件夹"
+            onClick={() => void chooseDownloadFolder()}
+            disabled={choosingFolder}
           >
-            {openingFolder ? <LoaderCircle className="spin" size={15} /> : <FolderOpen size={15} />}
-            打开媒体文件夹
+            {choosingFolder ? <LoaderCircle className="spin" size={15} /> : <FolderOpen size={15} />}
+            选择下载文件夹
           </button>
           <div className="service-state"><span /> Cobalt 本地解析</div>
         </div>

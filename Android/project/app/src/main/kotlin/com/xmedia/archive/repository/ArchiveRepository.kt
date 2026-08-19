@@ -64,9 +64,6 @@ class ArchiveRepository(context: Context) {
     suspend fun clearHistory(): Int {
         val terminal = dao.listJobs().filter { it.status in setOf("completed", "failed", "canceled") }
         if (terminal.isEmpty()) return 0
-        terminal.flatMap { dao.mediaForJob(it.id) }.mapNotNull { it.mediaStoreUri }.forEach { uri ->
-            runCatching { appContext.contentResolver.delete(android.net.Uri.parse(uri), null, null) }
-        }
         val removed = dao.deleteTerminalJobs(terminal.map { it.id })
         dao.deleteOrphanMedia()
         return removed

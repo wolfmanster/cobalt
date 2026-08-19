@@ -51,6 +51,7 @@ android {
     }
 
     sourceSets["main"].java.srcDirs(preparedJavaSource)
+    sourceSets["main"].assets.srcDirs("../../../node_modules/@capacitor/android/capacitor/src/main/assets")
     sourceSets["main"].res.srcDirs("../../../node_modules/@capacitor/android/capacitor/src/main/res")
     sourceSets["main"].manifest.srcFile("../../../node_modules/@capacitor/android/capacitor/src/main/AndroidManifest.xml")
 }

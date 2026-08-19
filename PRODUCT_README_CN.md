@@ -1,4 +1,4 @@
-# X 媒体存档
+# Veo Downloader
 
 面向公开 X 单帖链接的本地媒体归档工具。React + TypeScript 前端负责批量输入、预览和队列交互；Node.js + TypeScript 后端负责任务、元数据、下载和历史；仓库内的 Cobalt Node 服务只负责媒体解析。
 

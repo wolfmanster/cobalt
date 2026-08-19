@@ -43,9 +43,14 @@ export function clearHistory() {
   return request<{ removed: number }>('/api/history', { method: 'DELETE' });
 }
 
-export function openMediaFolder() {
-  if (native) return LocalArchive.openMediaFolder().then(() => ({ ok: true as const }));
-  return request<{ ok: true }>('/api/open-media-folder', { method: 'POST' });
+export function selectDownloadFolder() {
+  if (native) return LocalArchive.selectDownloadFolder();
+  return Promise.reject(new Error('仅 Android 应用支持选择下载文件夹'));
+}
+
+export function getDownloadFolder() {
+  if (native) return LocalArchive.getDownloadFolder();
+  return Promise.resolve({ selected: true });
 }
 
 export function openMedia(id: string) {

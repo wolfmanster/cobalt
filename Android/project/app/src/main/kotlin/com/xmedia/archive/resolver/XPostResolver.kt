@@ -1,5 +1,7 @@
 package com.xmedia.archive.resolver
 
+import android.media.MediaExtractor
+import android.media.MediaFormat
 import okhttp3.OkHttpClient
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
@@ -8,6 +10,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import kotlinx.coroutines.CancellationException
 import java.net.URI
+import java.net.URLDecoder
 import java.time.Instant
 import java.util.UUID
 import kotlin.math.PI
@@ -32,7 +35,10 @@ data class ResolvedMedia(
 
 data class ResolvedPost(val tweetId: String, val canonicalUrl: String, val metadata: ResolvedMetadata, val media: List<ResolvedMedia>)
 
-class XPostResolver(private val client: OkHttpClient = OkHttpClient()) {
+class XPostResolver(
+    private val client: OkHttpClient = OkHttpClient(),
+    private val audioBitrateResolver: (String) -> Int? = ::readAudioBitrate,
+) {
     fun parseUrl(raw: String): Pair<String, String> {
         val url = URI(raw.trim())
         val host = url.host?.lowercase() ?: throw IllegalArgumentException("链接缺少域名")
@@ -166,7 +172,7 @@ class XPostResolver(private val client: OkHttpClient = OkHttpClient()) {
                 val type = item.optString("type")
                 val source = when (type) {
                     "photo" -> item.optString("media_url_https")
-                    "video", "animated_gif" -> bestVariant(item.optJSONObject("video_info")?.optJSONArray("variants"))
+                    "video", "animated_gif" -> videoCandidates(item.optJSONObject("video_info")?.optJSONArray("variants")).firstOrNull().orEmpty()
                     else -> ""
                 }
                 if (source.isBlank()) continue
@@ -179,22 +185,82 @@ class XPostResolver(private val client: OkHttpClient = OkHttpClient()) {
         }
     }
 
-    private fun bestVariant(variants: JSONArray?): String {
-        if (variants == null) return ""
-        var best = ""
-        var bestBitrate = -1
-        for (index in 0 until variants.length()) {
-            val item = variants.optJSONObject(index) ?: continue
-            val url = item.optString("url")
-            if (url.isBlank()) continue
-            val bitrate = item.optInt("bitrate", 0)
-            if (bitrate >= bestBitrate) {
-                best = url
-                bestBitrate = bitrate
+    /**
+     * Returns only directly downloadable MP4 variants. X also exposes HLS manifests,
+     * which cannot be saved as a video file by the foreground downloader.
+     */
+    internal fun videoCandidates(variants: JSONArray?): List<String> {
+        if (variants == null) return emptyList()
+        val direct = directVideoVariants(buildList {
+            for (index in 0 until variants.length()) {
+                val item = variants.optJSONObject(index) ?: continue
+                add(RawVideoVariant(
+                    item.optString("content_type"),
+                    item.optString("url"),
+                    item.optInt("bitrate", 0),
+                    item.optInt("audio_bitrate", -1).takeIf { it > 0 },
+                ))
             }
-        }
-        return best
+        })
+        val highestResolution = direct.maxWithOrNull(compareBy<VideoVariant> { it.height }.thenBy { it.width }) ?: return emptyList()
+        return rankVideoCandidates(direct.map { candidate ->
+            if (candidate.height != highestResolution.height || candidate.width != highestResolution.width) candidate
+            else candidate.copy(audioBitrate = candidate.audioBitrate ?: audioBitrateResolver(candidate.url))
+        })
     }
+
+    /**
+     * Keeps only directly downloadable MP4s with a discoverable resolution. Omitting
+     * candidates of unknown resolution is intentional: choosing one by bitrate would
+     * violate the highest-resolution download policy. These MP4s are muxed; for equal
+     * video resolutions, audio bitrate is the primary tie-breaker and muxed bitrate is
+     * used only when the audio bitrate cannot distinguish the variants.
+     */
+    internal fun directVideoCandidates(variants: List<RawVideoVariant>): List<String> {
+        return rankVideoCandidates(directVideoVariants(variants))
+    }
+
+    internal fun directVideoVariants(variants: List<RawVideoVariant>): List<VideoVariant> = variants.mapNotNull { variant ->
+            if (!isDirectMp4Variant(variant.contentType, variant.url)) return@mapNotNull null
+            val (width, height) = videoResolution(variant.url) ?: return@mapNotNull null
+            VideoVariant(variant.url, width, height, variant.audioBitrate, variant.bitrate)
+        }
+
+    internal fun rankVideoCandidates(candidates: List<VideoVariant>): List<String> = candidates
+            .sortedWith(compareByDescending<VideoVariant> { it.height }
+                .thenByDescending { it.width }
+                .thenByDescending { it.audioBitrate ?: -1 }
+                .thenByDescending { it.muxedBitrate })
+            .map { it.url }
+            .distinct()
+
+    internal fun isDirectMp4Variant(contentType: String, url: String): Boolean =
+        url.isNotBlank() && contentType.substringBefore(';').trim().equals("video/mp4", ignoreCase = true)
+
+    private fun videoResolution(url: String): Pair<Int, Int>? {
+        val uri = runCatching { URI(url) }.getOrNull() ?: return null
+        val match = RESOLUTION_PATTERN.find(uri.rawPath.orEmpty())
+            ?: namedResolutionQuery(uri.rawQuery)
+            ?: return null
+        val width = match.groupValues[1].toIntOrNull() ?: return null
+        val height = match.groupValues[2].toIntOrNull() ?: return null
+        return width to height
+    }
+
+    private fun namedResolutionQuery(rawQuery: String?): MatchResult? = rawQuery
+        ?.split('&')
+        ?.asSequence()
+        ?.mapNotNull { entry ->
+            val separator = entry.indexOf('=')
+            if (separator < 1) return@mapNotNull null
+            val name = URLDecoder.decode(entry.substring(0, separator), Charsets.UTF_8.name()).lowercase()
+            if (name !in RESOLUTION_QUERY_NAMES) return@mapNotNull null
+            RESOLUTION_PATTERN.find(URLDecoder.decode(entry.substring(separator + 1), Charsets.UTF_8.name()))
+        }
+        ?.firstOrNull()
+
+    internal data class RawVideoVariant(val contentType: String, val url: String, val bitrate: Int, val audioBitrate: Int? = null)
+    internal data class VideoVariant(val url: String, val width: Int, val height: Int, val audioBitrate: Int? = null, val muxedBitrate: Int)
 
     private fun extension(rawUrl: String, fallback: String): String = runCatching {
         URI(rawUrl).path.substringAfterLast('.', fallback).lowercase().takeIf { it.matches(Regex("[a-z0-9]{2,5}")) } ?: fallback
@@ -224,6 +290,22 @@ class XPostResolver(private val client: OkHttpClient = OkHttpClient()) {
         private const val BEARER = "Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
         private const val GRAPHQL_FEATURES = "{\"responsive_web_graphql_timeline_navigation_enabled\":true,\"responsive_web_graphql_skip_user_profile_image_extensions_enabled\":false,\"tweet_awards_web_tipping_enabled\":false,\"longform_notetweets_consumption_enabled\":true,\"responsive_web_enhance_cards_enabled\":false}"
         private const val GRAPHQL_FIELD_TOGGLES = "{\"withArticleRichContentState\":true,\"withArticlePlainText\":false}"
+        private val RESOLUTION_PATTERN = Regex("(?<!\\d)(\\d{2,5})x(\\d{2,5})(?!\\d)", RegexOption.IGNORE_CASE)
+        private val RESOLUTION_QUERY_NAMES = setOf("resolution", "dimensions", "dimension", "size")
         @Volatile private var cachedGuestToken: String? = null
+
+        private fun readAudioBitrate(url: String): Int? = runCatching {
+            val extractor = MediaExtractor()
+            try {
+                extractor.setDataSource(url, mapOf("User-Agent" to USER_AGENT))
+                (0 until extractor.trackCount)
+                    .map { extractor.getTrackFormat(it) }
+                    .filter { format -> format.getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true }
+                    .mapNotNull { format -> if (format.containsKey(MediaFormat.KEY_BIT_RATE)) format.getInteger(MediaFormat.KEY_BIT_RATE) else null }
+                    .maxOrNull()
+            } finally {
+                extractor.release()
+            }
+        }.getOrNull()
     }
 }

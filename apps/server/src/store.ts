@@ -64,7 +64,18 @@ export class JobStore {
     for (const [id, job] of this.jobs) {
       if (['completed', 'failed', 'canceled'].includes(job.status)) {
         this.jobs.delete(id);
-        mediaDirectories.push(path.join(this.mediaDir, id));
+        const mediaRoot = path.resolve(this.mediaDir);
+        const directories = new Set(
+          job.media
+            .map((media) => {
+              if (!media.localPath) return undefined;
+              const directory = path.resolve(this.dataDir, path.dirname(media.localPath));
+              return directory.startsWith(`${mediaRoot}${path.sep}`) ? directory : undefined;
+            })
+            .filter((directory): directory is string => Boolean(directory)),
+        );
+        if (!directories.size) directories.add(path.join(this.mediaDir, id));
+        mediaDirectories.push(...directories);
         count += 1;
       }
     }

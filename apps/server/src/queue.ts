@@ -6,6 +6,7 @@ import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { fetchPostMetadata } from './metadata.js';
 import { resolveMedia } from './cobalt.js';
+import { buildAuthorFolder, buildMediaFilename, buildPostFolder } from './media-paths.js';
 import type { DownloadJob, MediaItem } from './types.js';
 import { JobStore } from './store.js';
 
@@ -143,12 +144,18 @@ export class DownloadQueue extends EventEmitter {
     if (contentType && EXTENSIONS[contentType]) {
       media.filename = media.filename.replace(/\.[a-z0-9]+$/i, `.${EXTENSIONS[contentType]}`);
     }
+    media.filename = buildMediaFilename(media, index);
     media.contentType = contentType;
     media.totalBytes = total;
 
-    const jobDir = path.join(this.store.mediaDir, job.id);
+    const metadata = job.metadata;
+    const authorFolder = metadata
+      ? buildAuthorFolder(metadata, job.tweetId)
+      : job.tweetId;
+    const postFolder = buildPostFolder(metadata, job.tweetId);
+    const jobDir = path.join(this.store.mediaDir, authorFolder, postFolder);
     await fsp.mkdir(jobDir, { recursive: true });
-    const finalPath = path.join(jobDir, media.filename.replace(/[^a-zA-Z0-9._-]/g, '_'));
+    const finalPath = path.join(jobDir, media.filename);
     const partialPath = `${finalPath}.part`;
     media.localPath = path.relative(this.store.dataDir, finalPath);
 

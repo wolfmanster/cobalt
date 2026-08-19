@@ -1,0 +1,11 @@
+/sdk/
+/toolchain/
+/gradle/
+/gradle-cache/
+/.android/
+/build-cache/
+/artifacts/
+/tmp/
+/project/.gradle/
+/project/**/build/
+/project/**/captures/

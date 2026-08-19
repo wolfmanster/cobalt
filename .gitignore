@@ -15,6 +15,8 @@ node_modules
 build
 dist
 data
+!Android/project/app/src/main/kotlin/com/xmedia/archive/data/
+!Android/project/app/src/main/kotlin/com/xmedia/archive/data/**
 *.tsbuildinfo
 /apps/client/vite.config.js
 /apps/client/vite.config.d.ts

@@ -20,7 +20,7 @@ import {
   X,
   Zap,
 } from 'lucide-react';
-import { cancelJob, clearHistory, createJobs, listJobs, openMediaFolder, retryJob } from './api';
+import { cancelJob, clearHistory, createJobs, listJobs, openMedia, openMediaFolder, retryJob, subscribeJobs } from './api';
 import type { DownloadJob, JobStatus, MediaItem } from './types';
 
 const STATUS: Record<JobStatus, { label: string; className: string }> = {
@@ -120,7 +120,16 @@ function JobCard({ job, onAction }: { job: DownloadJob; onAction: (action: 'canc
                 <MediaPreview media={media} />
                 <div className="media-caption">
                   <span>{media.kind === 'video' ? <Video size={13} /> : <ImageIcon size={13} />}{media.filename}</span>
-                  <a href={media.downloadUrl} title="下载"><Download size={15} /></a>
+                  <a
+                    href={media.downloadUrl}
+                    title="下载"
+                    onClick={(event) => {
+                      if (media.downloadUrl.startsWith('content:')) {
+                        event.preventDefault();
+                        void openMedia(media.id);
+                      }
+                    }}
+                  ><Download size={15} /></a>
                 </div>
               </div>
             ))}
@@ -153,10 +162,8 @@ export default function App() {
 
   useEffect(() => {
     void listJobs().then(setJobs).catch((error) => setNotice(error.message));
-    const events = new EventSource('/api/events');
-    events.onmessage = (event) => setJobs(JSON.parse(event.data));
-    events.onerror = () => setNotice('实时连接暂时中断，正在自动重连');
-    return () => events.close();
+    const events = subscribeJobs(setJobs);
+    return () => { void events.close(); };
   }, []);
 
   useEffect(() => {

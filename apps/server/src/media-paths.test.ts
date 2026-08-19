@@ -24,8 +24,9 @@ describe('media path naming', () => {
     expect(folder).not.toMatch(/[<>:"/\\|?*]/);
   });
 
-  it('builds the author folder from display name and user ID', () => {
-    expect(buildAuthorFolder({ authorName: 'A/B', userId: '42' }, 'fallback')).toBe('A_B_42');
+  it('builds the author folder from display name and username', () => {
+    expect(buildAuthorFolder({ authorName: 'A/B', username: 'animal_kyawa_' }, 'fallback'))
+      .toBe('A_B@animal_kyawa_');
   });
 
   it.each([

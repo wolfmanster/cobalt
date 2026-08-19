@@ -33,8 +33,8 @@ export function formatPublishedDate(isoDate: string | undefined): string {
   return `${values.year}-${values.month}-${values.day}`;
 }
 
-export function buildAuthorFolder(metadata: Pick<PostMetadata, 'authorName' | 'userId'>, fallback: string): string {
-  return sanitizePathSegment(`${metadata.authorName}_${metadata.userId}`, fallback);
+export function buildAuthorFolder(metadata: Pick<PostMetadata, 'authorName' | 'username'>, fallback: string): string {
+  return sanitizePathSegment(`${metadata.authorName}@${metadata.username}`, fallback);
 }
 
 export function buildPostFolder(metadata: Pick<PostMetadata, 'publishedAt' | 'text'> | undefined, tweetId: string): string {

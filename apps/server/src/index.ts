@@ -121,7 +121,7 @@ app.post('/api/open-media-folder', async (_req, res) => {
         resolve();
       });
     });
-    return res.json({ path: store.mediaDir });
+    return res.json({ ok: true });
   } catch (error) {
     return res.status(500).json({ error: error instanceof Error ? error.message : '无法打开媒体文件夹' });
   }

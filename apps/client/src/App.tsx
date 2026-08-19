@@ -232,7 +232,7 @@ export default function App() {
           <button
             className="folder-button"
             type="button"
-            title="打开 C:\\Users\\70918\\Desktop\\veo downloader\\data\\media"
+            title="打开媒体文件夹"
             onClick={() => void showMediaFolder()}
             disabled={openingFolder}
           >

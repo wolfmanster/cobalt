@@ -35,5 +35,5 @@ export function clearHistory() {
 }
 
 export function openMediaFolder() {
-  return request<{ path: string }>('/api/open-media-folder', { method: 'POST' });
+  return request<{ ok: true }>('/api/open-media-folder', { method: 'POST' });
 }

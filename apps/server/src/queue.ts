@@ -101,8 +101,6 @@ export class DownloadQueue extends EventEmitter {
       this.store.update(jobId, { metadata, media, status: 'downloading', progress: 12 });
       this.emitChange();
 
-      await this.downloadAvatar(job, metadata.avatarUrl, controller.signal);
-
       for (let index = 0; index < media.length; index += 1) {
         await this.downloadMedia(job, media[index]!, index, media.length, controller.signal);
       }
@@ -123,24 +121,6 @@ export class DownloadQueue extends EventEmitter {
         });
       }
       this.emitChange();
-    }
-  }
-
-  private async downloadAvatar(job: DownloadJob, avatarUrl: string, signal: AbortSignal): Promise<void> {
-    if (!avatarUrl) return;
-    try {
-      const response = await fetch(avatarUrl, { signal });
-      if (!response.ok) return;
-      const contentType = response.headers.get('content-type')?.split(';')[0];
-      const extension = contentType ? (EXTENSIONS[contentType] ?? 'jpg') : 'jpg';
-      const jobDir = path.join(this.store.mediaDir, job.id);
-      await fsp.mkdir(jobDir, { recursive: true });
-      const avatarPath = path.join(jobDir, `avatar.${extension}`);
-      await fsp.writeFile(avatarPath, Buffer.from(await response.arrayBuffer()));
-      this.store.update(job.id, { avatarPath: path.relative(this.store.dataDir, avatarPath) });
-    } catch (error) {
-      if (signal.aborted) throw error;
-      // Avatar failure does not discard otherwise valid post media.
     }
   }
 

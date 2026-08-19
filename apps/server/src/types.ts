@@ -36,7 +36,6 @@ export interface DownloadJob {
   status: JobStatus;
   progress: number;
   metadata?: PostMetadata;
-  avatarPath?: string;
   media: MediaItem[];
   error?: string;
   attempts: number;

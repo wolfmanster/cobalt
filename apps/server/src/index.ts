@@ -23,13 +23,10 @@ app.use(cors());
 app.use(express.json({ limit: '1mb' }));
 
 function publicJob(job: DownloadJob) {
-  const { avatarPath, ...visibleJob } = job;
+  const { avatarPath: _legacyAvatarPath, ...visibleJob } = job as DownloadJob & { avatarPath?: string };
   return {
     ...visibleJob,
-    metadata: job.metadata ? {
-      ...job.metadata,
-      avatarUrl: avatarPath ? `/api/jobs/${job.id}/avatar` : '',
-    } : undefined,
+    metadata: job.metadata,
     media: job.media.map(({ sourceUrl: _sourceUrl, localPath: _localPath, ...media }) => ({
       ...media,
       previewUrl: `/api/jobs/${job.id}/media/${media.id}`,
@@ -109,15 +106,6 @@ app.post('/api/jobs/:id/retry', (req, res) => {
 });
 
 app.delete('/api/history', async (_req, res) => res.json({ removed: await store.clearCompleted() }));
-
-app.get('/api/jobs/:jobId/avatar', (req, res) => {
-  const job = store.get(req.params.jobId);
-  if (!job?.avatarPath) return res.status(404).end();
-  const filePath = path.resolve(store.dataDir, job.avatarPath);
-  if (!filePath.startsWith(`${path.resolve(store.mediaDir)}${path.sep}`) || !fs.existsSync(filePath)) return res.status(404).end();
-  res.setHeader('Cache-Control', 'private, max-age=3600');
-  return fs.createReadStream(filePath).pipe(res);
-});
 
 app.get('/api/jobs/:jobId/media/:mediaId', async (req, res) => {
   const job = store.get(req.params.jobId);

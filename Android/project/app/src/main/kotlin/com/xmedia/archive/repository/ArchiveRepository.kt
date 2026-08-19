@@ -54,6 +54,8 @@ class ArchiveRepository(context: Context) {
 
     suspend fun requeueInterrupted() = dao.requeueInterrupted(Instant.now().toString())
 
+    suspend fun hasPendingJobs() = dao.hasPendingJobs()
+
     suspend fun replaceMedia(jobId: String, media: List<MediaEntity>) = dao.replaceMedia(jobId, media)
 
     suspend fun clearHistory(): Int {

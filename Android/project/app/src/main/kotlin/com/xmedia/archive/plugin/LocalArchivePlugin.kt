@@ -30,6 +30,9 @@ class LocalArchivePlugin : Plugin() {
                 notifyListeners("jobsChanged", JSObject().put("jobs", repository.jobsJson()))
             }
         }
+        scope.launch {
+            if (repository.hasPendingJobs()) DownloadForegroundService.start(context)
+        }
     }
 
     @PluginMethod
@@ -119,8 +122,13 @@ class LocalArchivePlugin : Plugin() {
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
             val launchIntent = if (action == Intent.ACTION_SEND) Intent.createChooser(intent, "分享媒体") else intent
-            context.startActivity(launchIntent)
-            call.resolve()
+            runCatching {
+                context.startActivity(launchIntent)
+            }.onSuccess {
+                call.resolve()
+            }.onFailure { error ->
+                call.reject(error.message ?: "无法打开媒体文件")
+            }
         }
     }
 

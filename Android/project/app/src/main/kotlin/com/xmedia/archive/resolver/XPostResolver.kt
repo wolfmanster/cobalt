@@ -168,8 +168,10 @@ class XPostResolver(private val client: OkHttpClient = OkHttpClient()) {
                     else -> ""
                 }
                 if (source.isBlank()) continue
-                val kind = if (type == "photo") "image" else if (type == "animated_gif") "gif" else "video"
-                val ext = extension(source, if (kind == "image") "jpg" else if (kind == "gif") "gif" else "mp4")
+                // X serves animated GIFs as MP4 variants. Treat them as video so their
+                // MediaStore collection and WebView renderer match the bytes on disk.
+                val kind = if (type == "photo") "image" else "video"
+                val ext = extension(source, if (kind == "image") "jpg" else "mp4")
                 add(ResolvedMedia(kind = kind, filename = "x_${tweetId}_${index + 1}.$ext", sourceUrl = source, position = index))
             }
         }

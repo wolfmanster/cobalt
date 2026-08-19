@@ -45,6 +45,9 @@ interface ArchiveDao {
     @Query("UPDATE jobs SET status = 'queued', progress = 0, error = NULL, updatedAt = :updatedAt WHERE status IN ('resolving', 'downloading')")
     suspend fun requeueInterrupted(updatedAt: String): Int
 
+    @Query("SELECT EXISTS(SELECT 1 FROM jobs WHERE status IN ('queued', 'resolving', 'downloading'))")
+    suspend fun hasPendingJobs(): Boolean
+
     @Transaction
     suspend fun replaceMedia(jobId: String, media: List<MediaEntity>) {
         deleteMedia(jobId)

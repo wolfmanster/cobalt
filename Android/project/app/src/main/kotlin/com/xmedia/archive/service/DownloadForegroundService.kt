@@ -33,14 +33,15 @@ import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.time.Instant
-import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.coroutineContext
 
 class DownloadForegroundService : Service() {
     private val serviceJob = SupervisorJob()
     private val scope = CoroutineScope(Dispatchers.IO + serviceJob)
-    private val running = AtomicBoolean(false)
+    private val queueLock = Any()
+    private var running = false
+    private var rerunRequested = false
     private lateinit var repository: ArchiveRepository
     private val resolver = XPostResolver()
     private val client = OkHttpClient()
@@ -53,7 +54,16 @@ class DownloadForegroundService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startForeground(NOTIFICATION_ID, notification("准备下载任务", 0))
-        if (running.compareAndSet(false, true)) scope.launch { runQueue() }
+        val shouldStart = synchronized(queueLock) {
+            if (running) {
+                rerunRequested = true
+                false
+            } else {
+                running = true
+                true
+            }
+        }
+        if (shouldStart) scope.launch { runQueue() }
         return START_NOT_STICKY
     }
 
@@ -70,9 +80,22 @@ class DownloadForegroundService : Service() {
                 }
             }
         } finally {
-            running.set(false)
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
+            val shouldRestart = synchronized(queueLock) {
+                running = false
+                if (rerunRequested) {
+                    rerunRequested = false
+                    running = true
+                    true
+                } else {
+                    false
+                }
+            }
+            if (shouldRestart) {
+                scope.launch { runQueue() }
+            } else {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
+            }
         }
     }
 
@@ -127,13 +150,14 @@ class DownloadForegroundService : Service() {
             if (!response.isSuccessful) throw IllegalStateException("媒体下载失败（HTTP ${response.code}）")
             val body = response.body ?: throw IllegalStateException("媒体响应为空")
             val total = body.contentLength().takeIf { it > 0 }
+            val contentType = body.contentType()?.toString() ?: mimeFor(item.filename)
             val collection = when (item.kind) {
                 "image", "gif" -> MediaStore.Images.Media.EXTERNAL_CONTENT_URI
                 else -> MediaStore.Video.Media.EXTERNAL_CONTENT_URI
             }
             val values = ContentValues().apply {
                 put(MediaStore.MediaColumns.DISPLAY_NAME, item.filename)
-                put(MediaStore.MediaColumns.MIME_TYPE, item.contentType ?: mimeFor(item.filename))
+                put(MediaStore.MediaColumns.MIME_TYPE, contentType)
                 put(MediaStore.MediaColumns.RELATIVE_PATH, "Download/X Media Archive")
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) put(MediaStore.MediaColumns.IS_PENDING, 1)
             }
@@ -156,7 +180,7 @@ class DownloadForegroundService : Service() {
                             repository.update(current.copy(progress = progress, status = JobStatus.DOWNLOADING.name.lowercase()))
                             updateNotification("正在保存 ${index + 1}/$count", progress)
                         }
-                        val updated = item.copy(size = received, downloadedBytes = received, totalBytes = total, mediaStoreUri = uri.toString())
+                        val updated = item.copy(contentType = contentType, size = received, downloadedBytes = received, totalBytes = total, mediaStoreUri = uri.toString())
                         ArchiveDatabase.get(this).dao().upsertMedia(listOf(updated))
                     }
                 } ?: throw IllegalStateException("无法写入媒体文件")

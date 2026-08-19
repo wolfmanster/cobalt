@@ -52,7 +52,10 @@ class ArchiveRepository(context: Context) {
 
     suspend fun update(job: JobEntity) = dao.upsertJob(job.copy(updatedAt = Instant.now().toString()))
 
-    suspend fun requeueInterrupted() = dao.requeueInterrupted(Instant.now().toString())
+    suspend fun requeueInterrupted(): Int {
+        dao.interruptedJobs().forEach { job -> removeMedia(job.id) }
+        return dao.requeueInterrupted(Instant.now().toString())
+    }
 
     suspend fun hasPendingJobs() = dao.hasPendingJobs()
 
@@ -60,10 +63,11 @@ class ArchiveRepository(context: Context) {
 
     suspend fun clearHistory(): Int {
         val terminal = dao.listJobs().filter { it.status in setOf("completed", "failed", "canceled") }
+        if (terminal.isEmpty()) return 0
         terminal.flatMap { dao.mediaForJob(it.id) }.mapNotNull { it.mediaStoreUri }.forEach { uri ->
             runCatching { appContext.contentResolver.delete(android.net.Uri.parse(uri), null, null) }
         }
-        val removed = dao.deleteHistory()
+        val removed = dao.deleteTerminalJobs(terminal.map { it.id })
         dao.deleteOrphanMedia()
         return removed
     }
@@ -71,7 +75,7 @@ class ArchiveRepository(context: Context) {
     suspend fun retry(id: String): Boolean {
         val job = dao.getJob(id) ?: return false
         if (job.status != JobStatus.FAILED.name.lowercase() && job.status != JobStatus.CANCELED.name.lowercase()) return false
-        dao.deleteMedia(id)
+        removeMedia(id)
         update(job.copy(status = JobStatus.QUEUED.name.lowercase(), progress = 0, error = null, completedAt = null))
         return true
     }
@@ -86,6 +90,13 @@ class ArchiveRepository(context: Context) {
     suspend fun jobsJson(): JSONArray = JSONArray(dao.listJobs().map { job -> toJson(job, dao.mediaForJob(job.id)) })
 
     suspend fun jobJson(id: String): JSONObject? = dao.getJob(id)?.let { toJson(it, dao.mediaForJob(id)) }
+
+    private suspend fun removeMedia(jobId: String) {
+        dao.mediaForJob(jobId).mapNotNull { it.mediaStoreUri }.forEach { uri ->
+            runCatching { appContext.contentResolver.delete(android.net.Uri.parse(uri), null, null) }
+        }
+        dao.deleteMedia(jobId)
+    }
 
     private fun toJson(job: JobEntity, media: List<MediaEntity>): JSONObject {
         val result = JSONObject()

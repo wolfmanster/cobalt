@@ -6,6 +6,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
+import kotlinx.coroutines.CancellationException
 import java.net.URI
 import java.time.Instant
 import java.util.UUID
@@ -45,7 +46,7 @@ class XPostResolver(private val client: OkHttpClient = OkHttpClient()) {
     }
 
     fun resolve(tweetId: String, signal: () -> Boolean = { false }): ResolvedPost {
-        if (signal()) throw InterruptedException("任务已取消")
+        if (signal()) throw CancellationException("任务已取消")
         val syndication = runCatching { requestSyndication(tweetId, signal) }.getOrNull()
         if (syndication != null) return syndication
         return resolveGraphql(tweetId, signal)
@@ -53,12 +54,13 @@ class XPostResolver(private val client: OkHttpClient = OkHttpClient()) {
     }
 
     private fun requestSyndication(tweetId: String, signal: () -> Boolean): ResolvedPost {
-        if (signal()) throw InterruptedException("任务已取消")
+        if (signal()) throw CancellationException("任务已取消")
         val token = base36((tweetId.toDouble() / 1e15) * PI).replace(Regex("(0+|\\.)"), "")
         val requestUrl = "https://cdn.syndication.twimg.com/tweet-result?id=$tweetId&token=$token&lang=zh-cn"
         val request = Request.Builder().url(requestUrl).header("User-Agent", USER_AGENT).header("Accept", "application/json").build()
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) throw IllegalStateException("Syndication HTTP ${response.code}")
+            if (signal()) throw CancellationException("任务已取消")
             return postFromSyndication(JSONObject(response.body?.string() ?: "{}"), tweetId)
         }
     }
@@ -88,7 +90,7 @@ class XPostResolver(private val client: OkHttpClient = OkHttpClient()) {
     private fun resolveGraphql(tweetId: String, signal: () -> Boolean): ResolvedPost? {
         var token = guestToken() ?: return null
         repeat(2) { attempt ->
-            if (signal()) throw InterruptedException("任务已取消")
+            if (signal()) throw CancellationException("任务已取消")
             val url = GRAPHQL_URL.toHttpUrl().newBuilder()
                 .addQueryParameter("variables", JSONObject().put("focalTweetId", tweetId).put("with_rux_injections", false).put("rankingMode", "Relevance").put("includePromotedContent", true).put("withCommunity", true).toString())
                 .addQueryParameter("features", GRAPHQL_FEATURES)

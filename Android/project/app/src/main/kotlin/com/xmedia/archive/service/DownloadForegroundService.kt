@@ -112,6 +112,7 @@ class DownloadForegroundService : Service() {
             repository.update(job)
             val resolved = resolver.resolve(job.tweetId) { canceledJobs.contains(job.id) }
             coroutineContext.ensureActive()
+            if (canceledJobs.contains(job.id)) throw CancellationException("任务已取消")
             val media = resolved.media.map {
                 MediaEntity(it.id, job.id, it.kind, it.filename, sourceUrl = it.sourceUrl, position = it.position)
             }
@@ -163,6 +164,7 @@ class DownloadForegroundService : Service() {
             }
             val uri = contentResolver.insert(collection, values) ?: throw IllegalStateException("无法创建媒体文件")
             try {
+                ArchiveDatabase.get(this).dao().upsertMedia(listOf(item.copy(contentType = contentType, mediaStoreUri = uri.toString())))
                 contentResolver.openOutputStream(uri)?.use { output ->
                     body.byteStream().use { input ->
                         val buffer = ByteArray(DEFAULT_BUFFER_SIZE)

@@ -36,14 +36,17 @@ interface ArchiveDao {
     @Query("DELETE FROM media WHERE jobId = :jobId")
     suspend fun deleteMedia(jobId: String)
 
-    @Query("DELETE FROM jobs WHERE status IN ('completed', 'failed', 'canceled')")
-    suspend fun deleteHistory(): Int
+    @Query("DELETE FROM jobs WHERE id IN (:ids) AND status IN ('completed', 'failed', 'canceled')")
+    suspend fun deleteTerminalJobs(ids: List<String>): Int
 
     @Query("DELETE FROM media WHERE jobId NOT IN (SELECT id FROM jobs)")
     suspend fun deleteOrphanMedia()
 
     @Query("UPDATE jobs SET status = 'queued', progress = 0, error = NULL, updatedAt = :updatedAt WHERE status IN ('resolving', 'downloading')")
     suspend fun requeueInterrupted(updatedAt: String): Int
+
+    @Query("SELECT * FROM jobs WHERE status IN ('resolving', 'downloading')")
+    suspend fun interruptedJobs(): List<JobEntity>
 
     @Query("SELECT EXISTS(SELECT 1 FROM jobs WHERE status IN ('queued', 'resolving', 'downloading'))")
     suspend fun hasPendingJobs(): Boolean

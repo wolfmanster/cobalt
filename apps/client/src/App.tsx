@@ -7,6 +7,7 @@ import {
   Clock3,
   Download,
   FileText,
+  FolderOpen,
   History,
   Image as ImageIcon,
   LoaderCircle,
@@ -19,7 +20,7 @@ import {
   X,
   Zap,
 } from 'lucide-react';
-import { cancelJob, clearHistory, createJobs, listJobs, retryJob } from './api';
+import { cancelJob, clearHistory, createJobs, listJobs, openMediaFolder, retryJob } from './api';
 import type { DownloadJob, JobStatus, MediaItem } from './types';
 
 const STATUS: Record<JobStatus, { label: string; className: string }> = {
@@ -146,6 +147,7 @@ export default function App() {
   const [submitting, setSubmitting] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [notice, setNotice] = useState('');
+  const [openingFolder, setOpeningFolder] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const urls = useMemo(() => extractUrls(input), [input]);
 
@@ -206,6 +208,17 @@ export default function App() {
     setNotice(`已清除 ${removed} 条历史记录`);
   }
 
+  async function showMediaFolder() {
+    setOpeningFolder(true);
+    try {
+      await openMediaFolder();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '无法打开媒体文件夹');
+    } finally {
+      setOpeningFolder(false);
+    }
+  }
+
   const activeJobs = jobs.filter((job) => ['queued', 'resolving', 'downloading'].includes(job.status));
   const historyJobs = jobs.filter((job) => ['completed', 'failed', 'canceled'].includes(job.status));
   const visibleJobs = tab === 'queue' ? activeJobs : historyJobs;
@@ -215,7 +228,19 @@ export default function App() {
     <div className="app-shell">
       <header className="topbar">
         <a className="brand" href="#top"><span className="brand-mark">𝕏</span><span>X 媒体存档<small>PUBLIC MEDIA ARCHIVE</small></span></a>
-        <div className="service-state"><span /> Cobalt 本地解析</div>
+        <div className="topbar-actions">
+          <button
+            className="folder-button"
+            type="button"
+            title="打开 C:\\Users\\70918\\Desktop\\veo downloader\\data\\media"
+            onClick={() => void showMediaFolder()}
+            disabled={openingFolder}
+          >
+            {openingFolder ? <LoaderCircle className="spin" size={15} /> : <FolderOpen size={15} />}
+            打开媒体文件夹
+          </button>
+          <div className="service-state"><span /> Cobalt 本地解析</div>
+        </div>
       </header>
 
       <main id="top">

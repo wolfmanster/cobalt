@@ -26,6 +26,10 @@ a { color: inherit; text-decoration: none; }
 .brand-mark { width: 37px; height: 37px; border-radius: 9px; display: grid; place-items: center; background: var(--ink); color: white; font-size: 19px; }
 .brand > span:last-child { display: grid; line-height: 1.05; }
 .brand small { font: 500 8px/1.7 Consolas, monospace; letter-spacing: .14em; color: var(--muted); }
+.topbar-actions { display: flex; align-items: center; gap: 20px; }
+.folder-button { border: 1px solid var(--line); background: var(--card); min-height: 32px; padding: 0 11px; display: flex; align-items: center; gap: 7px; cursor: pointer; color: var(--ink); font-size: 11px; }
+.folder-button:hover:not(:disabled) { border-color: var(--ink); color: var(--accent); }
+.folder-button:disabled { opacity: .6; cursor: wait; }
 .service-state { font: 500 11px Consolas, monospace; letter-spacing: .04em; color: var(--muted); display: flex; gap: 8px; align-items: center; }
 .service-state span { width: 7px; height: 7px; background: #3c9c64; border-radius: 50%; box-shadow: 0 0 0 4px rgba(60,156,100,.12); }
 main { width: min(1120px, calc(100% - 56px)); margin: 0 auto; }
@@ -120,6 +124,7 @@ main { width: min(1120px, calc(100% - 56px)); margin: 0 auto; }
 
 @media (max-width: 760px) {
   .topbar { padding: 0 20px; }
+  .topbar-actions { gap: 0; }
   .service-state { display: none; }
   main { width: calc(100% - 28px); }
   .hero { padding: 52px 0 36px; display: block; }

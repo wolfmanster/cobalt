@@ -33,3 +33,7 @@ export function retryJob(id: string) {
 export function clearHistory() {
   return request<{ removed: number }>('/api/history', { method: 'DELETE' });
 }
+
+export function openMediaFolder() {
+  return request<{ path: string }>('/api/open-media-folder', { method: 'POST' });
+}

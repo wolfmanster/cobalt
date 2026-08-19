@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { spawn } from 'node:child_process';
 import path from 'node:path';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
@@ -106,6 +107,25 @@ app.post('/api/jobs/:id/retry', (req, res) => {
 });
 
 app.delete('/api/history', async (_req, res) => res.json({ removed: await store.clearCompleted() }));
+
+app.post('/api/open-media-folder', async (_req, res) => {
+  const platform = process.platform;
+  const command = platform === 'win32' ? 'explorer.exe' : platform === 'darwin' ? 'open' : 'xdg-open';
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const opener = spawn(command, [store.mediaDir], { detached: true, stdio: 'ignore' });
+      opener.once('error', reject);
+      opener.once('spawn', () => {
+        opener.unref();
+        resolve();
+      });
+    });
+    return res.json({ path: store.mediaDir });
+  } catch (error) {
+    return res.status(500).json({ error: error instanceof Error ? error.message : '无法打开媒体文件夹' });
+  }
+});
 
 app.get('/api/jobs/:jobId/media/:mediaId', async (req, res) => {
   const job = store.get(req.params.jobId);

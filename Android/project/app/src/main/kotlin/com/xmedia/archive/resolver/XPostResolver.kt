@@ -2,6 +2,7 @@ package com.xmedia.archive.resolver
 
 import android.media.MediaExtractor
 import android.media.MediaFormat
+import android.util.Log
 import okhttp3.OkHttpClient
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -135,7 +136,16 @@ class XPostResolver(
         repeat(2) { attempt ->
             if (signal()) throw CancellationException("任务已取消")
             val url = GRAPHQL_URL.toHttpUrl().newBuilder()
-                .addQueryParameter("variables", JSONObject().put("focalTweetId", tweetId).put("with_rux_injections", false).put("rankingMode", "Relevance").put("includePromotedContent", true).put("withCommunity", true).toString())
+                .addQueryParameter("variables", JSONObject()
+                    .put("focalTweetId", tweetId)
+                    .put("with_rux_injections", false)
+                    .put("rankingMode", "Relevance")
+                    .put("includePromotedContent", true)
+                    .put("withCommunity", true)
+                    .put("withQuickPromoteEligibilityTweetFields", true)
+                    .put("withBirdwatchNotes", true)
+                    .put("withVoice", true)
+                    .toString())
                 .addQueryParameter("features", GRAPHQL_FEATURES)
                 .addQueryParameter("fieldToggles", GRAPHQL_FIELD_TOGGLES)
                 .build()
@@ -154,25 +164,54 @@ class XPostResolver(
                     return GraphqlOutcome.Unavailable
                 }
                 val root = JSONObject(response.body?.string() ?: "{}")
-                val result = findTweetResult(root, tweetId) ?: return GraphqlOutcome.Unavailable
+                val result = findTweetResult(root, tweetId) ?: run {
+                    logWarning("TweetDetail response has no focal result: ${graphqlErrorSummary(root)}")
+                    return GraphqlOutcome.Unavailable
+                }
                 unavailableOutcome(result)?.let { outcome ->
+                    logWarning("TweetDetail unavailable result: typename=${result.optString("__typename", "missing")}, outcome=$outcome")
                     return if (session != null && outcome == GraphqlOutcome.RequiresSession) GraphqlOutcome.SessionRejected else outcome
                 }
                 val base = if (result.optString("__typename") == "TweetWithVisibilityResults") result.optJSONObject("tweet") ?: result else result
-                val legacy = base.optJSONObject("legacy") ?: return GraphqlOutcome.Unavailable
+                val legacy = base.optJSONObject("legacy") ?: run {
+                    logGraphqlShape("missing tweet legacy", result, base)
+                    return GraphqlOutcome.Unavailable
+                }
                 val media = legacy.optJSONObject("extended_entities")?.optJSONArray("media")
                     ?: legacy.optJSONObject("entities")?.optJSONArray("media")
                 val parsedMedia = parseMedia(media, tweetId)
-                if (parsedMedia.isEmpty()) return GraphqlOutcome.Unavailable
-                val user = base.optJSONObject("core")?.optJSONObject("user_results")?.optJSONObject("result")?.optJSONObject("legacy")
-                    ?: return GraphqlOutcome.Unavailable
-                val username = user.optString("screen_name")
-                val userId = user.optString("id_str")
-                if (user.optBoolean("protected", false) && session == null) return GraphqlOutcome.Protected
-                if (username.isBlank() || userId.isBlank()) return GraphqlOutcome.Unavailable
+                if (parsedMedia.isEmpty()) {
+                    logGraphqlShape("missing supported media", result, base, legacy)
+                    return GraphqlOutcome.Unavailable
+                }
+                val userResult = base.optJSONObject("core")?.optJSONObject("user_results")?.optJSONObject("result")
+                if (userResult == null) {
+                    logGraphqlShape("missing user result", result, base)
+                    return GraphqlOutcome.Unavailable
+                }
+                // X is migrating user identity fields from `legacy` to the newer split
+                // core/avatar/privacy/rest_id shape. Accept both because TweetDetail may return
+                // either shape depending on account and feature switches.
+                val userLegacy = userResult.optJSONObject("legacy")
+                val userCore = userResult.optJSONObject("core")
+                val username = userLegacy?.optString("screen_name").orEmpty()
+                    .ifBlank { userCore?.optString("screen_name").orEmpty() }
+                val userId = userLegacy?.optString("id_str").orEmpty()
+                    .ifBlank { userResult.optString("rest_id") }
+                val isProtected = userLegacy?.optBoolean("protected", false) == true ||
+                    userResult.optJSONObject("privacy")?.optBoolean("protected", false) == true
+                if (isProtected && session == null) return GraphqlOutcome.Protected
+                if (username.isBlank() || userId.isBlank()) {
+                    logGraphqlShape("missing user identity", result, base, userResult, userLegacy, userCore)
+                    return GraphqlOutcome.Unavailable
+                }
                 return GraphqlOutcome.Resolved(ResolvedPost(tweetId, "https://x.com/i/status/$tweetId", ResolvedMetadata(
-                    user.optString("name", username), username, userId,
-                    user.optString("profile_image_url_https", "").replace("_normal.", "_400x400."),
+                    userLegacy?.optString("name").orEmpty().ifBlank { userCore?.optString("name").orEmpty() }.ifBlank { username },
+                    username,
+                    userId,
+                    userLegacy?.optString("profile_image_url_https").orEmpty()
+                        .ifBlank { userResult.optJSONObject("avatar")?.optString("image_url").orEmpty() }
+                        .replace("_normal.", "_400x400."),
                     legacy.optString("full_text", legacy.optString("text", "")), legacy.optString("lang", "und"),
                     legacy.optString("created_at", ""),
                 ), parsedMedia))
@@ -189,6 +228,8 @@ class XPostResolver(
             .add("X-Twitter-Client-Language", "en")
             .add("X-Twitter-Active-User", "yes")
             .add("Accept-Language", "en")
+            .add("Accept", "application/json")
+            .add("Content-Type", "application/json")
         if (session == null) {
             headers.add("X-Guest-Token", requireNotNull(guestToken))
             headers.add("Cookie", "guest_id=v1:${requireNotNull(guestToken)}")
@@ -206,6 +247,34 @@ class XPostResolver(
         if (reason == "Protected") return GraphqlOutcome.Protected
         val text = result.optJSONObject("tombstone")?.optJSONObject("text")?.optString("text").orEmpty()
         return if (reason == "NsfwLoggedOut" || text.startsWith("Age-restricted")) GraphqlOutcome.RequiresSession else GraphqlOutcome.Unavailable
+    }
+
+    /** Returns only X error codes/messages; response data and session values are never logged. */
+    private fun graphqlErrorSummary(root: JSONObject): String {
+        val errors = root.optJSONArray("errors") ?: return "no GraphQL errors"
+        return buildList {
+            for (index in 0 until errors.length()) {
+                val error = errors.optJSONObject(index) ?: continue
+                val code = error.optString("code", error.optString("kind", "unknown"))
+                val message = error.optString("message", "unknown")
+                    .replace(Regex("\\s+"), " ")
+                    .take(160)
+                add("$code: $message")
+            }
+        }.joinToString(" | ").ifBlank { "empty GraphQL errors" }
+    }
+
+    private fun logGraphqlShape(stage: String, vararg objects: JSONObject?) {
+        val shapes = objects.mapIndexed { index, value ->
+            val keys = value?.keys()?.asSequence()?.toList()?.sorted()?.joinToString(",").orEmpty()
+            "$index={${keys.take(600)}}"
+        }.joinToString(" ")
+        logWarning("TweetDetail $stage: $shapes")
+    }
+
+    // android.util.Log is unavailable in local JVM tests; diagnostics must never affect resolving.
+    private fun logWarning(message: String) {
+        runCatching { Log.w(LOG_TAG, message) }
     }
 
     private sealed interface GraphqlOutcome {
@@ -361,12 +430,15 @@ class XPostResolver(
     }
 
     companion object {
+        private const val LOG_TAG = "XPostResolver"
         private const val USER_AGENT = "Mozilla/5.0 (Android) AppleWebKit/537.36 Chrome/131 Mobile Safari/537.36"
         private const val GRAPHQL_URL = "https://api.x.com/graphql/4Siu98E55GquhG52zHdY5w/TweetDetail"
         private const val GUEST_TOKEN_URL = "https://api.x.com/1.1/guest/activate.json"
         private const val BEARER = "Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
-        private const val GRAPHQL_FEATURES = "{\"responsive_web_graphql_timeline_navigation_enabled\":true,\"responsive_web_graphql_skip_user_profile_image_extensions_enabled\":false,\"tweet_awards_web_tipping_enabled\":false,\"longform_notetweets_consumption_enabled\":true,\"responsive_web_enhance_cards_enabled\":false}"
-        private const val GRAPHQL_FIELD_TOGGLES = "{\"withArticleRichContentState\":true,\"withArticlePlainText\":false}"
+        // Keep this request contract aligned with cobalt's current Twitter resolver. X returns
+        // HTTP 200 plus an empty timeline when required feature flags are omitted.
+        private const val GRAPHQL_FEATURES = "{\"rweb_video_screen_enabled\":false,\"payments_enabled\":false,\"rweb_xchat_enabled\":false,\"profile_label_improvements_pcf_label_in_post_enabled\":true,\"rweb_tipjar_consumption_enabled\":true,\"verified_phone_label_enabled\":false,\"creator_subscriptions_tweet_preview_api_enabled\":true,\"responsive_web_graphql_timeline_navigation_enabled\":true,\"responsive_web_graphql_skip_user_profile_image_extensions_enabled\":false,\"premium_content_api_read_enabled\":false,\"communities_web_enable_tweet_community_results_fetch\":true,\"c9s_tweet_anatomy_moderator_badge_enabled\":true,\"responsive_web_grok_analyze_button_fetch_trends_enabled\":false,\"responsive_web_grok_analyze_post_followups_enabled\":true,\"responsive_web_jetfuel_frame\":true,\"responsive_web_grok_share_attachment_enabled\":true,\"articles_preview_enabled\":true,\"responsive_web_edit_tweet_api_enabled\":true,\"graphql_is_translatable_rweb_tweet_is_translatable_enabled\":true,\"view_counts_everywhere_api_enabled\":true,\"longform_notetweets_consumption_enabled\":true,\"responsive_web_twitter_article_tweet_consumption_enabled\":true,\"tweet_awards_web_tipping_enabled\":false,\"responsive_web_grok_show_grok_translated_post\":false,\"responsive_web_grok_analysis_button_from_backend\":true,\"creator_subscriptions_quote_tweet_preview_enabled\":false,\"freedom_of_speech_not_reach_fetch_enabled\":true,\"standardized_nudges_misinfo\":true,\"tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled\":true,\"longform_notetweets_rich_text_read_enabled\":true,\"longform_notetweets_inline_media_enabled\":true,\"responsive_web_grok_image_annotation_enabled\":true,\"responsive_web_grok_imagine_annotation_enabled\":true,\"responsive_web_grok_community_note_auto_translation_is_enabled\":false,\"responsive_web_enhance_cards_enabled\":false}"
+        private const val GRAPHQL_FIELD_TOGGLES = "{\"withArticleRichContentState\":true,\"withArticlePlainText\":false,\"withGrokAnalyze\":false,\"withDisallowedReplyControls\":false}"
         private val RESOLUTION_PATTERN = Regex("(?<!\\d)(\\d{2,5})x(\\d{2,5})(?!\\d)", RegexOption.IGNORE_CASE)
         private val RESOLUTION_QUERY_NAMES = setOf("resolution", "dimensions", "dimension", "size")
         @Volatile private var cachedGuestToken: String? = null

@@ -76,6 +76,36 @@ class XPostResolverTest {
         assertEquals("auth_token=auth-value; ct0=csrf-value", headers["Cookie"])
         assertEquals("csrf-value", headers["X-Csrf-Token"])
         assertEquals("OAuth2Session", headers["X-Twitter-Auth-Type"])
+        assertEquals("application/json", headers["Content-Type"])
+    }
+
+    @Test
+    fun usesTheCurrentCobaltTweetDetailRequestContract() {
+        var graphqlRequest: Request? = null
+        val resolver = resolverFor { request ->
+            when {
+                request.url.host == "cdn.syndication.twimg.com" -> jsonResponse(request, "{}", 503)
+                request.url.encodedPath.endsWith("guest/activate.json") -> jsonResponse(request, "{\"guest_token\":\"guest-token\"}")
+                else -> {
+                    graphqlRequest = request
+                    jsonResponse(request, resolvedTweet("123"))
+                }
+            }
+        }
+
+        resolver.resolve("123")
+
+        val variables = JSONObject(graphqlRequest?.url?.queryParameter("variables").orEmpty())
+        val features = JSONObject(graphqlRequest?.url?.queryParameter("features").orEmpty())
+        val fieldToggles = JSONObject(graphqlRequest?.url?.queryParameter("fieldToggles").orEmpty())
+        assertTrue(variables.getBoolean("withQuickPromoteEligibilityTweetFields"))
+        assertTrue(variables.getBoolean("withBirdwatchNotes"))
+        assertTrue(variables.getBoolean("withVoice"))
+        assertTrue(features.length() >= 30)
+        assertTrue(features.getBoolean("communities_web_enable_tweet_community_results_fetch"))
+        assertFalse(features.getBoolean("responsive_web_grok_show_grok_translated_post"))
+        assertFalse(fieldToggles.getBoolean("withGrokAnalyze"))
+        assertFalse(fieldToggles.getBoolean("withDisallowedReplyControls"))
     }
 
     @Test
@@ -199,6 +229,24 @@ class XPostResolverTest {
     }
 
     @Test
+    fun parsesTheModernUserShapeForAnAuthorizedProtectedPost() {
+        val resolver = resolverFor { request ->
+            when {
+                request.url.encodedPath.endsWith("guest/activate.json") -> jsonResponse(request, "{\"guest_token\":\"guest-token\"}")
+                request.header("X-Twitter-Auth-Type") == "OAuth2Session" -> jsonResponse(request, resolvedTweet("123", protected = true, modernUser = true))
+                else -> jsonResponse(request, protectedTweet("123"))
+            }
+        }
+
+        val post = resolver.resolve("123")
+
+        assertEquals("example", post.metadata.username)
+        assertEquals("Example", post.metadata.authorName)
+        assertEquals("1", post.metadata.userId)
+        assertEquals("https://pbs.twimg.com/profile_400x400.jpg", post.metadata.avatarUrl)
+    }
+
+    @Test
     fun retriesAnUnavailableGuestResultWithTheAuthorizedSession() {
         var authorizedRequestMade = false
         val resolver = resolverFor { request ->
@@ -311,21 +359,29 @@ class XPostResolverTest {
             .put("media_url_https", "https://pbs.twimg.com/media/example.jpg")))
         .toString()
 
-    private fun resolvedTweet(id: String, protected: Boolean = false): String = tweetEnvelope(id, JSONObject()
-        .put("__typename", "Tweet")
-        .put("legacy", JSONObject()
-            .put("full_text", "hello")
-            .put("lang", "en")
-            .put("created_at", "2025-01-01T00:00:00Z")
-            .put("extended_entities", JSONObject().put("media", JSONArray().put(JSONObject()
-                .put("type", "photo")
-                .put("media_url_https", "https://pbs.twimg.com/media/example.jpg")))))
-        .put("core", JSONObject().put("user_results", JSONObject().put("result", JSONObject().put("legacy", JSONObject()
+    private fun resolvedTweet(id: String, protected: Boolean = false, modernUser: Boolean = false): String {
+        val user = if (modernUser) JSONObject()
+            .put("rest_id", "1")
+            .put("core", JSONObject().put("name", "Example").put("screen_name", "example"))
+            .put("avatar", JSONObject().put("image_url", "https://pbs.twimg.com/profile_normal.jpg"))
+            .put("privacy", JSONObject().put("protected", protected))
+        else JSONObject().put("legacy", JSONObject()
             .put("name", "Example")
             .put("screen_name", "example")
             .put("id_str", "1")
             .put("protected", protected)
-            .put("profile_image_url_https", ""))))))
+            .put("profile_image_url_https", ""))
+        return tweetEnvelope(id, JSONObject()
+            .put("__typename", "Tweet")
+            .put("legacy", JSONObject()
+                .put("full_text", "hello")
+                .put("lang", "en")
+                .put("created_at", "2025-01-01T00:00:00Z")
+                .put("extended_entities", JSONObject().put("media", JSONArray().put(JSONObject()
+                    .put("type", "photo")
+                    .put("media_url_https", "https://pbs.twimg.com/media/example.jpg")))))
+            .put("core", JSONObject().put("user_results", JSONObject().put("result", user))))
+    }
 
     private fun tweetEnvelope(id: String, result: JSONObject): String {
         val entry = JSONObject()

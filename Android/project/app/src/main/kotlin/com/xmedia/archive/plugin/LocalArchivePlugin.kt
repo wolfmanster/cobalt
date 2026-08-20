@@ -12,6 +12,7 @@ import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.CapacitorPlugin
 import com.getcapacitor.annotation.ActivityCallback
 import com.xmedia.archive.XLoginActivity
+import com.xmedia.archive.data.JobStatus
 import com.xmedia.archive.repository.ArchiveRepository
 import com.xmedia.archive.resolver.XAuthSessionStore
 import com.xmedia.archive.service.DownloadForegroundService
@@ -213,7 +214,16 @@ class LocalArchivePlugin : Plugin() {
                 call.reject("该任务无法${if (action == "cancel") "取消" else "重试"}")
                 return@launch
             }
-            if (action == "retry") DownloadForegroundService.start(context)
+            if (action == "retry" && !DownloadForegroundService.start(context)) {
+                repository.getJob(id)?.let { job ->
+                    repository.update(job.copy(
+                        status = JobStatus.FAILED.name.lowercase(),
+                        error = "系统暂不允许后台启动下载；请解锁设备并保持应用在前台后重试",
+                    ))
+                }
+                call.reject("请解锁设备并保持应用在前台后重试")
+                return@launch
+            }
             val result = repository.jobJson(id)
             if (result == null) call.reject("任务不存在") else call.resolve(JSObject(result.toString()))
         }

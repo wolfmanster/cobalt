@@ -230,9 +230,13 @@ class DownloadForegroundService : Service() {
         private const val MAX_CONCURRENCY = 2
         private val canceledJobs = ConcurrentHashMap.newKeySet<String>()
 
-        fun start(context: android.content.Context) {
+        /** Returns false when Android temporarily forbids foreground-service starts. */
+        fun start(context: android.content.Context): Boolean = try {
             val intent = Intent(context, DownloadForegroundService::class.java)
             androidx.core.content.ContextCompat.startForegroundService(context, intent)
+            true
+        } catch (_: RuntimeException) {
+            false
         }
 
         fun cancel(id: String) {

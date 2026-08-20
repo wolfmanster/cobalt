@@ -15,12 +15,14 @@ export interface LocalArchivePlugin {
   getXSessionStatus(): Promise<{ configured: boolean }>;
   startXLogin(): Promise<{ configured: boolean; canceled: boolean }>;
   clearXSession(): Promise<{ configured: boolean }>;
+  consumeSharedContent(): Promise<{ text: string }>;
   readClipboard(): Promise<{ text: string }>;
   openMedia(input: { id: string }): Promise<void>;
   selectDownloadFolder(): Promise<{ selected: boolean; uri?: string }>;
   getDownloadFolder(): Promise<{ selected: boolean }>;
   shareMedia(input: { id: string }): Promise<void>;
   addListener(eventName: 'jobsChanged', listenerFunc: (event: { jobs: DownloadJob[] }) => void): Promise<PluginListenerHandle>;
+  addListener(eventName: 'sharedContent', listenerFunc: (event: { text: string }) => void): Promise<PluginListenerHandle>;
 }
 
 export const LocalArchive = registerPlugin<LocalArchivePlugin>('LocalArchive');

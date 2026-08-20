@@ -7,18 +7,21 @@ import {
   Clock3,
   Download,
   FileText,
+  FolderCheck,
   FolderOpen,
   History,
   Image as ImageIcon,
+  Link2,
   LoaderCircle,
   Pause,
   Play,
   RotateCcw,
+  ShieldCheck,
+  Sparkles,
   Trash2,
   Upload,
   Video,
   X,
-  Zap,
 } from 'lucide-react';
 import { cancelJob, clearHistory, createJobs, getDownloadFolder, listJobs, openMedia, retryJob, selectDownloadFolder, subscribeJobs } from './api';
 import type { DownloadJob, JobStatus, MediaItem } from './types';
@@ -167,11 +170,13 @@ export default function App() {
   const [dragging, setDragging] = useState(false);
   const [notice, setNotice] = useState('');
   const [choosingFolder, setChoosingFolder] = useState(false);
+  const [folderReady, setFolderReady] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const urls = useMemo(() => extractUrls(input), [input]);
 
   useEffect(() => {
     void listJobs().then(setJobs).catch((error) => setNotice(error.message));
+    void getDownloadFolder().then((result) => setFolderReady(result.selected)).catch(() => undefined);
     const events = subscribeJobs(setJobs);
     return () => { void events.close(); };
   }, []);
@@ -204,6 +209,7 @@ export default function App() {
           setNotice('请选择下载文件夹后再加入队列');
           return;
         }
+        setFolderReady(true);
       }
       const result = await createJobs(urls);
       setInput('');
@@ -236,7 +242,10 @@ export default function App() {
     setChoosingFolder(true);
     try {
       const result = await selectDownloadFolder();
-      if (result.selected) setNotice('已保存下载文件夹；新任务将写入该文件夹');
+      if (result.selected) {
+        setFolderReady(true);
+        setNotice('已保存下载文件夹；新任务将写入该文件夹');
+      }
     } catch (error) {
       setNotice(error instanceof Error ? error.message : '无法选择下载文件夹');
     } finally {
@@ -248,93 +257,141 @@ export default function App() {
   const historyJobs = jobs.filter((job) => ['completed', 'failed', 'canceled'].includes(job.status));
   const visibleJobs = tab === 'queue' ? activeJobs : historyJobs;
   const completedToday = jobs.filter((job) => job.completedAt?.slice(0, 10) === new Date().toISOString().slice(0, 10)).length;
+  const completedTotal = jobs.filter((job) => job.status === 'completed').length;
+
+  function focusComposer() {
+    document.querySelector('.ingest-panel')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    window.setTimeout(() => document.querySelector<HTMLTextAreaElement>('.ingest-panel textarea')?.focus(), 350);
+  }
+
+  function jumpToTab(nextTab: 'queue' | 'history') {
+    setTab(nextTab);
+    document.querySelector('.workspace')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
 
   return (
     <div className="app-shell">
       <header className="topbar">
-        <a className="brand" href="#top"><span className="brand-mark">▶</span><span>Veo Downloader<small>VIDEO DOWNLOADER</small></span></a>
+        <a className="brand" href="#top" aria-label="返回首页">
+          <span className="brand-mark"><Play size={17} fill="currentColor" /></span>
+          <span>Veo<small>媒体下载器</small></span>
+        </a>
         <div className="topbar-actions">
           <button
-            className="folder-button"
+            className={`folder-button ${folderReady ? 'is-ready' : ''}`}
             type="button"
             title="选择或更改下载文件夹"
             onClick={() => void chooseDownloadFolder()}
             disabled={choosingFolder}
           >
-            {choosingFolder ? <LoaderCircle className="spin" size={15} /> : <FolderOpen size={15} />}
-            选择下载文件夹
+            {choosingFolder ? <LoaderCircle className="spin" size={17} /> : folderReady ? <FolderCheck size={17} /> : <FolderOpen size={17} />}
+            <span>{folderReady ? '文件夹已设置' : '选择下载文件夹'}</span>
           </button>
-          <div className="service-state"><span /> Cobalt 本地解析</div>
+          <div className="service-state"><span /> 本地服务在线</div>
         </div>
       </header>
 
       <main id="top">
         <section className="hero">
-          <div className="eyebrow"><Zap size={13} fill="currentColor" /> PUBLIC POSTS ONLY</div>
-          <h1>把公开帖子，<br /><em>妥善存下来。</em></h1>
-          <p>批量提取 X 帖子中的视频、图片与 GIF，同时保留必要的作者和正文信息。</p>
+          <div className="hero-copy">
+            <div className="eyebrow"><Sparkles size={14} /> 快速 · 清晰 · 本地保存</div>
+            <h1>收藏好内容，<br /><em>只需一个链接。</em></h1>
+            <p>粘贴公开 X 帖子链接，一次保存视频、图片和 GIF。任务在本机处理，进度一目了然。</p>
+          </div>
+          <div className="hero-art" aria-hidden="true">
+            <div className="orb orb-one" />
+            <div className="orb orb-two" />
+            <div className="hero-device">
+              <span><Video size={20} /></span>
+              <div><i /><i /><i /></div>
+              <b><ArrowDownToLine size={18} /></b>
+            </div>
+          </div>
         </section>
 
         <section className="ingest-panel">
           <div className="panel-heading">
-            <div><span>01</span><h2>添加帖子链接</h2></div>
-            <p>支持单条、多行粘贴，最多 200 条</p>
+            <div><span><Link2 size={17} /></span><div><h2>添加帖子链接</h2><small>每行一个，最多 200 条</small></div></div>
+            <div className="privacy-chip"><ShieldCheck size={13} /> 仅公开内容</div>
           </div>
-          <textarea
-            value={input}
-            onChange={(event) => setInput(event.target.value)}
-            placeholder={'https://x.com/user/status/123456789\nhttps://x.com/user/status/987654321'}
-            aria-label="X 帖子链接"
-          />
-          <div
-            className={`drop-zone ${dragging ? 'dragging' : ''}`}
-            onDragOver={(event) => { event.preventDefault(); setDragging(true); }}
-            onDragLeave={() => setDragging(false)}
-            onDrop={(event) => { event.preventDefault(); setDragging(false); void importFile(event.dataTransfer.files[0]); }}
-            onClick={() => fileRef.current?.click()}
-          >
-            <Upload size={17} /><span>拖入 TXT / CSV，或点击选择</span>
-            <input ref={fileRef} type="file" accept=".txt,.csv,text/plain,text/csv" hidden onChange={(event) => void importFile(event.target.files?.[0])} />
+          <div className="composer">
+            <textarea
+              value={input}
+              onChange={(event) => setInput(event.target.value)}
+              placeholder={'在这里粘贴 X 帖子链接…\nhttps://x.com/user/status/123456789'}
+              aria-label="X 帖子链接"
+            />
+            <div
+              className={`drop-zone ${dragging ? 'dragging' : ''}`}
+              onDragOver={(event) => { event.preventDefault(); setDragging(true); }}
+              onDragLeave={() => setDragging(false)}
+              onDrop={(event) => { event.preventDefault(); setDragging(false); void importFile(event.dataTransfer.files[0]); }}
+              onClick={() => fileRef.current?.click()}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') fileRef.current?.click(); }}
+            >
+              <Upload size={16} /><span>导入 TXT / CSV</span>
+              <input ref={fileRef} type="file" accept=".txt,.csv,text/plain,text/csv" hidden onChange={(event) => void importFile(event.target.files?.[0])} />
+            </div>
           </div>
           <div className="submit-row">
-            <div className="input-count"><FileText size={15} /><strong>{urls.length}</strong> 条可识别链接</div>
+            <div className={`input-count ${urls.length ? 'has-links' : ''}`}><FileText size={15} /><strong>{urls.length}</strong> 条链接已识别</div>
             <button className="primary-button" onClick={() => void submit()} disabled={!urls.length || submitting}>
-              {submitting ? <LoaderCircle className="spin" size={17} /> : <Play size={17} fill="currentColor" />}
-              加入下载队列
+              {submitting ? <LoaderCircle className="spin" size={18} /> : <ArrowDownToLine size={18} />}
+              开始下载
             </button>
           </div>
         </section>
 
+        <section className="quick-stats" aria-label="下载统计">
+          <div><span>今日完成</span><strong>{String(completedToday).padStart(2, '0')}</strong><i className="violet" /></div>
+          <div><span>正在处理</span><strong>{String(activeJobs.length).padStart(2, '0')}</strong><i className="orange" /></div>
+          <div><span>全部存档</span><strong>{String(completedTotal).padStart(2, '0')}</strong><i className="green" /></div>
+        </section>
+
         <section className="workspace">
           <div className="workspace-head">
-            <div className="tabs">
-              <button className={tab === 'queue' ? 'selected' : ''} onClick={() => setTab('queue')}><Archive size={17} />下载队列 <span>{activeJobs.length}</span></button>
-              <button className={tab === 'history' ? 'selected' : ''} onClick={() => setTab('history')}><History size={17} />历史记录 <span>{historyJobs.length}</span></button>
-            </div>
-            {tab === 'history' && historyJobs.length > 0 && <button className="clear-button" onClick={() => void clear()}><Trash2 size={14} />清除记录</button>}
+            <div className="workspace-title"><span>下载管理</span><h2>{tab === 'queue' ? '当前任务' : '历史记录'}</h2></div>
+            {tab === 'history' && historyJobs.length > 0 && <button className="clear-button" onClick={() => void clear()}><Trash2 size={15} />清除</button>}
           </div>
+          <div className="tabs" role="tablist" aria-label="下载任务筛选">
+              <button role="tab" aria-selected={tab === 'queue'} className={tab === 'queue' ? 'selected' : ''} onClick={() => setTab('queue')}><Archive size={17} />进行中 <span>{activeJobs.length}</span></button>
+              <button role="tab" aria-selected={tab === 'history'} className={tab === 'history' ? 'selected' : ''} onClick={() => setTab('history')}><History size={17} />已完成 <span>{historyJobs.length}</span></button>
+            </div>
 
           {visibleJobs.length ? (
             <div className="job-list">{visibleJobs.map((job) => <JobCard key={job.id} job={job} onAction={action} />)}</div>
           ) : (
             <div className="empty-state">
-              {tab === 'queue' ? <Pause size={28} /> : <History size={28} />}
-              <h3>{tab === 'queue' ? '队列目前是空的' : '还没有历史记录'}</h3>
-              <p>{tab === 'queue' ? '粘贴公开帖子链接，任务会在这里实时更新。' : '完成、失败或取消的任务会保留在这里。'}</p>
+              <span>{tab === 'queue' ? <Pause size={25} /> : <History size={25} />}</span>
+              <h3>{tab === 'queue' ? '准备好开始下载' : '这里还很安静'}</h3>
+              <p>{tab === 'queue' ? '添加链接后，下载进度会实时出现在这里。' : '完成、失败或取消的任务都会保留在这里。'}</p>
+              {tab === 'queue' && <button onClick={focusComposer}><Link2 size={15} />添加第一个链接</button>}
             </div>
           )}
         </section>
 
-        <section className="stats-strip">
-          <div><span>今日完成</span><strong>{String(completedToday).padStart(2, '0')}</strong></div>
-          <div><span>队列进行中</span><strong>{String(activeJobs.length).padStart(2, '0')}</strong></div>
-          <div><span>存档总数</span><strong>{String(jobs.filter((job) => job.status === 'completed').length).padStart(2, '0')}</strong></div>
-          <div className="privacy-note"><Check size={15} /><span>无需 Cookie<br /><small>仅处理公开帖子</small></span></div>
+        <section className="privacy-note">
+          <span><ShieldCheck size={19} /></span>
+          <div><strong>隐私优先</strong><small>无需 Cookie，仅处理公开帖子</small></div>
+          <Check size={17} />
         </section>
       </main>
 
       <footer className="page-footer"><span>媒体由本地 Cobalt 实例解析</span><span>不使用 X 官方 API · 不保存 Cookie</span></footer>
-      {notice && <div className="toast"><CircleAlert size={16} />{notice}<button onClick={() => setNotice('')}><X size={14} /></button></div>}
+      <nav className="mobile-nav" aria-label="主导航">
+        <button className={tab === 'queue' ? 'selected' : ''} onClick={() => jumpToTab('queue')} aria-current={tab === 'queue' ? 'page' : undefined}>
+          <Archive size={20} /><span>进行中</span>{activeJobs.length > 0 && <b>{activeJobs.length}</b>}
+        </button>
+        <button className="mobile-add" onClick={focusComposer} aria-label="添加下载链接">
+          <span><Link2 size={21} /></span><small>新建</small>
+        </button>
+        <button className={tab === 'history' ? 'selected' : ''} onClick={() => jumpToTab('history')} aria-current={tab === 'history' ? 'page' : undefined}>
+          <History size={20} /><span>已完成</span>{historyJobs.length > 0 && <b>{historyJobs.length}</b>}
+        </button>
+      </nav>
+      {notice && <div className="toast" role="status"><CircleAlert size={17} />{notice}<button onClick={() => setNotice('')} aria-label="关闭提示"><X size={15} /></button></div>}
     </div>
   );
 }

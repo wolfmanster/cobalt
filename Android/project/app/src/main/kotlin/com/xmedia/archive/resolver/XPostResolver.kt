@@ -317,7 +317,7 @@ class XPostResolver(
                 val item = items.optJSONObject(index) ?: continue
                 val type = item.optString("type")
                 val source = when (type) {
-                    "photo" -> item.optString("media_url_https")
+                    "photo" -> originalPhotoUrl(item.optString("media_url_https"))
                     "video", "animated_gif" -> videoCandidates(item.optJSONObject("video_info")?.optJSONArray("variants")).firstOrNull().orEmpty()
                     else -> ""
                 }
@@ -329,6 +329,15 @@ class XPostResolver(
                 add(ResolvedMedia(kind = kind, filename = "x_${tweetId}_${index + 1}.$ext", sourceUrl = source, position = index))
             }
         }
+    }
+
+    /** Requests the original X image instead of the default 1200-pixel rendition. */
+    internal fun originalPhotoUrl(rawUrl: String): String {
+        if (rawUrl.isBlank()) return ""
+        return rawUrl.toHttpUrl().newBuilder()
+            .setQueryParameter("name", "orig")
+            .build()
+            .toString()
     }
 
     /**

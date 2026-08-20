@@ -35,6 +35,18 @@ class XPostResolverTest {
     }
 
     @Test
+    fun requestsOriginalPhotosLikeCobalt() {
+        assertEquals(
+            "https://pbs.twimg.com/media/example.jpg?name=orig",
+            resolver.originalPhotoUrl("https://pbs.twimg.com/media/example.jpg"),
+        )
+        assertEquals(
+            "https://pbs.twimg.com/media/example?format=jpg&name=orig",
+            resolver.originalPhotoUrl("https://pbs.twimg.com/media/example?format=jpg&name=small"),
+        )
+    }
+
+    @Test
     fun ranksDirectVariantsByResolutionThenMuxedAudioVideoBitrate() {
         val variants = listOf(
             XPostResolver.VideoVariant("https://video.example/vid/avc1/1280x720/low.mp4", 1280, 720, null, 2_000_000),
@@ -123,6 +135,7 @@ class XPostResolverTest {
         val post = resolver.resolve("123")
 
         assertEquals("example", post.metadata.username)
+        assertEquals("https://pbs.twimg.com/media/example.jpg?name=orig", post.media.single().sourceUrl)
         assertEquals(0, nonSyndicationRequests)
     }
 

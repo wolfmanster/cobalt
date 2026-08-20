@@ -6,22 +6,25 @@ import {
   CircleAlert,
   Clock3,
   Download,
+  Facebook,
   FileText,
   FolderCheck,
   FolderOpen,
   History,
   Image as ImageIcon,
+  Instagram,
   Link2,
   LoaderCircle,
+  Music2,
   Pause,
-  Play,
   RotateCcw,
   ShieldCheck,
-  Sparkles,
   Trash2,
+  Twitch,
   Upload,
   Video,
   X,
+  Youtube,
 } from 'lucide-react';
 import { cancelJob, clearHistory, createJobs, getDownloadFolder, listJobs, openMedia, retryJob, selectDownloadFolder, subscribeJobs } from './api';
 import type { DownloadJob, JobStatus, MediaItem } from './types';
@@ -272,10 +275,6 @@ export default function App() {
   return (
     <div className="app-shell">
       <header className="topbar">
-        <a className="brand" href="#top" aria-label="返回首页">
-          <span className="brand-mark"><Play size={17} fill="currentColor" /></span>
-          <span>Veo<small>媒体下载器</small></span>
-        </a>
         <div className="topbar-actions">
           <button
             className={`folder-button ${folderReady ? 'is-ready' : ''}`}
@@ -292,20 +291,17 @@ export default function App() {
       </header>
 
       <main id="top">
-        <section className="hero">
-          <div className="hero-copy">
-            <div className="eyebrow"><Sparkles size={14} /> 快速 · 清晰 · 本地保存</div>
-            <h1>收藏好内容，<br /><em>只需一个链接。</em></h1>
-            <p>粘贴公开 X 帖子链接，一次保存视频、图片和 GIF。任务在本机处理，进度一目了然。</p>
-          </div>
-          <div className="hero-art" aria-hidden="true">
-            <div className="orb orb-one" />
-            <div className="orb orb-two" />
-            <div className="hero-device">
-              <span><Video size={20} /></span>
-              <div><i /><i /><i /></div>
-              <b><ArrowDownToLine size={18} /></b>
-            </div>
+        <section className="hero" aria-label="多平台媒体下载">
+          <div className="platform-scene" aria-hidden="true">
+            <div className="platform-orbit orbit-one" />
+            <div className="platform-orbit orbit-two" />
+            <div className="platform-core"><ArrowDownToLine size={34} /></div>
+            <div className="platform-chip platform-instagram"><Instagram size={22} /><span>Instagram</span></div>
+            <div className="platform-chip platform-youtube"><Youtube size={23} /><span>YouTube</span></div>
+            <div className="platform-chip platform-x"><b>𝕏</b></div>
+            <div className="platform-chip platform-tiktok"><Music2 size={21} /><span>TikTok</span></div>
+            <div className="platform-chip platform-facebook"><Facebook size={21} /><span>Facebook</span></div>
+            <div className="platform-chip platform-twitch"><Twitch size={21} /><span>Twitch</span></div>
           </div>
         </section>
 

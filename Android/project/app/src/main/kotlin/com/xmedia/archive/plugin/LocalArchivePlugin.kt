@@ -1,5 +1,7 @@
 package com.xmedia.archive.plugin
 
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.activity.result.ActivityResult
@@ -114,6 +116,18 @@ class LocalArchivePlugin : Plugin() {
                 .onSuccess { call.resolve(JSObject().put("configured", false)) }
                 .onFailure { error -> call.reject(error.message ?: "无法移除 X 会话") }
         }
+    }
+
+    @PluginMethod
+    fun readClipboard(call: PluginCall) {
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+        val text = clipboard?.primaryClip
+            ?.takeIf { it.itemCount > 0 }
+            ?.getItemAt(0)
+            ?.coerceToText(context)
+            ?.toString()
+            .orEmpty()
+        call.resolve(JSObject().put("text", text))
     }
 
     @PluginMethod

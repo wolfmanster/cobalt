@@ -27,7 +27,7 @@ import {
   X,
   Youtube,
 } from 'lucide-react';
-import { cancelJob, clearHistory, clearXSession, createJobs, getDownloadFolder, getXSessionStatus, listJobs, openMedia, retryJob, selectDownloadFolder, startXLogin, subscribeJobs, xLoginSupported } from './api';
+import { cancelJob, clearHistory, clearXSession, createJobs, getDownloadFolder, getXSessionStatus, listJobs, openMedia, readClipboardText, retryJob, selectDownloadFolder, startXLogin, subscribeJobs, xLoginSupported } from './api';
 import type { DownloadJob, JobStatus, MediaItem } from './types';
 
 const STATUS: Record<JobStatus, { label: string; className: string }> = {
@@ -284,8 +284,14 @@ export default function App() {
   const completedTotal = jobs.filter((job) => job.status === 'completed').length;
 
   function focusComposer() {
-    document.querySelector('.ingest-panel')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    window.setTimeout(() => document.querySelector<HTMLTextAreaElement>('.ingest-panel textarea')?.focus(), 350);
+    const panel = document.querySelector<HTMLElement>('.ingest-panel');
+    const textarea = panel?.querySelector<HTMLTextAreaElement>('textarea');
+    panel?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    textarea?.focus();
+    void readClipboardText().then((clipboardText) => {
+      const value = clipboardText.trim();
+      if (value) setInput((current) => current.trim() ? `${current.trim()}\n${value}` : value);
+    }).catch(() => undefined);
   }
 
   async function connectX() {

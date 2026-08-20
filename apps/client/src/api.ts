@@ -69,6 +69,16 @@ export function clearXSession() {
   return Promise.resolve({ configured: false });
 }
 
+export async function readClipboardText() {
+  try {
+    if (native) return (await LocalArchive.readClipboard()).text;
+    if (!navigator.clipboard?.readText) return '';
+    return await navigator.clipboard.readText();
+  } catch {
+    return '';
+  }
+}
+
 export function openMedia(id: string) {
   if (native) return LocalArchive.openMedia({ id });
   window.open(`/api/jobs/media/${id}`, '_blank', 'noopener');

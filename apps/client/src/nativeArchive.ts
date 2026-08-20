@@ -15,6 +15,7 @@ export interface LocalArchivePlugin {
   getXSessionStatus(): Promise<{ configured: boolean }>;
   startXLogin(): Promise<{ configured: boolean; canceled: boolean }>;
   clearXSession(): Promise<{ configured: boolean }>;
+  readClipboard(): Promise<{ text: string }>;
   openMedia(input: { id: string }): Promise<void>;
   selectDownloadFolder(): Promise<{ selected: boolean; uri?: string }>;
   getDownloadFolder(): Promise<{ selected: boolean }>;

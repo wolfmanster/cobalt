@@ -69,6 +69,11 @@ export function clearXSession() {
   return Promise.resolve({ configured: false });
 }
 
+export function consumeSharedContent() {
+  if (native) return LocalArchive.consumeSharedContent();
+  return Promise.resolve({ text: '' });
+}
+
 export async function readClipboardText() {
   try {
     if (native) return (await LocalArchive.readClipboard()).text;
@@ -107,4 +112,19 @@ export function subscribeJobs(onJobs: (jobs: DownloadJob[]) => void) {
   const events = new EventSource('/api/events');
   events.onmessage = (event) => onJobs(JSON.parse(event.data) as DownloadJob[]);
   return { close: async () => events.close() };
+}
+
+export function subscribeSharedContent(onText: (text: string) => void) {
+  if (!native) return { close: async () => undefined };
+  let handle: { remove: () => Promise<void> } | undefined;
+  const ready = LocalArchive.addListener('sharedContent', (event) => onText(event.text)).then((value) => {
+    handle = value;
+    return value;
+  });
+  return {
+    close: async () => {
+      await ready;
+      await handle?.remove();
+    },
+  };
 }

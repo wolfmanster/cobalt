@@ -29,9 +29,11 @@ class LocalArchivePlugin : Plugin() {
     private lateinit var repository: ArchiveRepository
     private lateinit var sessionStore: XAuthSessionStore
     private val scope = CoroutineScope(Dispatchers.Main.immediate + Job())
+    private var pendingSharedText: String? = null
 
     override fun load() {
         super.load()
+        pendingSharedText = sharedTextFromIntent(activity?.intent)
         repository = ArchiveRepository(context)
         sessionStore = XAuthSessionStore(context)
         scope.launch {
@@ -42,6 +44,23 @@ class LocalArchivePlugin : Plugin() {
         scope.launch {
             if (repository.hasPendingJobs()) DownloadForegroundService.start(context)
         }
+    }
+
+    override fun handleOnNewIntent(intent: Intent) {
+        val sharedText = sharedTextFromIntent(intent) ?: return
+        pendingSharedText = sharedText
+        notifyListeners(
+            "sharedContent",
+            JSObject().put("text", sharedText),
+            true,
+        )
+    }
+
+    @PluginMethod
+    fun consumeSharedContent(call: PluginCall) {
+        val sharedText = pendingSharedText
+        pendingSharedText = null
+        call.resolve(JSObject().put("text", sharedText ?: ""))
     }
 
     @PluginMethod
@@ -227,5 +246,10 @@ class LocalArchivePlugin : Plugin() {
             val result = repository.jobJson(id)
             if (result == null) call.reject("任务不存在") else call.resolve(JSObject(result.toString()))
         }
+    }
+
+    private fun sharedTextFromIntent(intent: Intent?): String? {
+        if (intent?.action != Intent.ACTION_SEND) return null
+        return intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()?.trim()?.takeIf(String::isNotBlank)
     }
 }

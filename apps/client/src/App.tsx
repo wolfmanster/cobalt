@@ -27,7 +27,7 @@ import {
   X,
   Youtube,
 } from 'lucide-react';
-import { cancelJob, clearHistory, clearXSession, createJobs, getDownloadFolder, getXSessionStatus, listJobs, openMedia, readClipboardText, retryJob, selectDownloadFolder, startXLogin, subscribeJobs, xLoginSupported } from './api';
+import { cancelJob, clearHistory, clearXSession, consumeSharedContent, createJobs, getDownloadFolder, getXSessionStatus, listJobs, openMedia, readClipboardText, retryJob, selectDownloadFolder, startXLogin, subscribeJobs, subscribeSharedContent, xLoginSupported } from './api';
 import type { DownloadJob, JobStatus, MediaItem } from './types';
 
 const STATUS: Record<JobStatus, { label: string; className: string }> = {
@@ -193,7 +193,44 @@ export default function App() {
   const [showSessionPanel, setShowSessionPanel] = useState(false);
   const [sessionBusy, setSessionBusy] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const handledSharedLinks = useRef(new Set<string>());
   const urls = useMemo(() => extractUrls(input), [input]);
+
+  const submitUrls = useCallback(async (requestedUrls: string[]) => {
+    if (!requestedUrls.length) return;
+    setSubmitting(true);
+    try {
+      if (!(await getDownloadFolder()).selected) {
+        const selected = await selectDownloadFolder();
+        if (!selected.selected) {
+          setNotice('请选择下载文件夹后再加入队列');
+          return;
+        }
+        setFolderReady(true);
+      }
+      const result = await createJobs(requestedUrls);
+      setInput('');
+      setTab('queue');
+      const parts = [`新增 ${result.created.length} 条`];
+      if (result.duplicates.length) parts.push(`去重 ${result.duplicates.length} 条`);
+      if (result.rejected.length) parts.push(`拒绝 ${result.rejected.length} 条无效链接`);
+      setNotice(parts.join('，'));
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '提交失败');
+    } finally {
+      setSubmitting(false);
+    }
+  }, []);
+
+  const receiveSharedContent = useCallback(async (text: string) => {
+    const sharedUrls = extractUrls(text);
+    const key = sharedUrls.join('\n');
+    if (!key || handledSharedLinks.current.has(key)) return;
+    handledSharedLinks.current.add(key);
+    setInput(sharedUrls.join('\n'));
+    setNotice(`已接收 ${sharedUrls.length} 条 X 链接，准备下载`);
+    await submitUrls(sharedUrls);
+  }, [submitUrls]);
 
   useEffect(() => {
     void listJobs().then(setJobs).catch((error) => setNotice(error.message));
@@ -202,8 +239,14 @@ export default function App() {
       void getXSessionStatus().then((result) => setSessionConfigured(result.configured)).catch(() => undefined);
     }
     const events = subscribeJobs(setJobs);
-    return () => { void events.close(); };
-  }, []);
+    const shared = subscribeSharedContent((text) => {
+      void receiveSharedContent(text);
+    });
+    void consumeSharedContent().then((result) => {
+      if (result.text) void receiveSharedContent(result.text);
+    });
+    return () => { void events.close(); void shared.close(); };
+  }, [receiveSharedContent]);
 
   useEffect(() => {
     if (!notice) return;
@@ -225,28 +268,7 @@ export default function App() {
 
   async function submit() {
     if (!urls.length) return setNotice('请先粘贴至少一条 X 帖子链接');
-    setSubmitting(true);
-    try {
-      if (!(await getDownloadFolder()).selected) {
-        const selected = await selectDownloadFolder();
-        if (!selected.selected) {
-          setNotice('请选择下载文件夹后再加入队列');
-          return;
-        }
-        setFolderReady(true);
-      }
-      const result = await createJobs(urls);
-      setInput('');
-      setTab('queue');
-      const parts = [`新增 ${result.created.length} 条`];
-      if (result.duplicates.length) parts.push(`去重 ${result.duplicates.length} 条`);
-      if (result.rejected.length) parts.push(`拒绝 ${result.rejected.length} 条无效链接`);
-      setNotice(parts.join('，'));
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : '提交失败');
-    } finally {
-      setSubmitting(false);
-    }
+    await submitUrls(urls);
   }
 
   async function action(kind: 'cancel' | 'retry', id: string) {

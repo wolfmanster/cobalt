@@ -18,6 +18,7 @@ object DownloadDestination {
     fun hasSelectedFolder(context: Context): Boolean =
         context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).contains(TREE_URI)
 
+    @Synchronized
     fun createTarget(context: Context, relativePostDirectory: String, filename: String, contentType: String): Uri {
         val savedTree = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).getString(TREE_URI, null)
             ?: throw IllegalStateException("请先选择下载文件夹")
@@ -26,7 +27,7 @@ object DownloadDestination {
         val directory = relativePostDirectory.split('/').filter(String::isNotBlank).fold(root) { parent, name ->
             parent.findFile(name)?.takeIf { it.isDirectory }
                 ?: parent.createDirectory(name)
-                ?: throw IllegalStateException("无法创建存档文件夹：$name")
+                ?: throw IllegalStateException("无法创建存档文件夹，请重新选择下载文件夹后重试")
         }
         directory.findFile(filename)?.let { existing ->
             if (!existing.delete()) throw IllegalStateException("无法替换已有文件：$filename")

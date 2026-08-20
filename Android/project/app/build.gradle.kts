@@ -4,6 +4,18 @@ plugins {
     id("org.jetbrains.kotlin.kapt")
 }
 
+val releaseStoreFile = providers.environmentVariable("ANDROID_RELEASE_STORE_FILE").orNull
+val releaseStorePassword = providers.environmentVariable("ANDROID_RELEASE_STORE_PASSWORD").orNull
+val releaseKeyAlias = providers.environmentVariable("ANDROID_RELEASE_KEY_ALIAS").orNull
+val releaseKeyPassword = providers.environmentVariable("ANDROID_RELEASE_KEY_PASSWORD").orNull
+val releaseTaskRequested = gradle.startParameter.taskNames.any { it.contains("Release", ignoreCase = true) }
+
+if (releaseTaskRequested) {
+    check(listOf(releaseStoreFile, releaseStorePassword, releaseKeyAlias, releaseKeyPassword).all { !it.isNullOrBlank() }) {
+        "Release signing requires ANDROID_RELEASE_STORE_FILE, ANDROID_RELEASE_STORE_PASSWORD, ANDROID_RELEASE_KEY_ALIAS, and ANDROID_RELEASE_KEY_PASSWORD."
+    }
+}
+
 android {
     namespace = "com.xmedia.archive"
     compileSdk = 36
@@ -14,11 +26,23 @@ android {
         minSdk = 29
         targetSdk = 36
         versionCode = 1
-        versionName = "0.1.0"
+        versionName = "1.0.0"
+    }
+
+    signingConfigs {
+        if (!releaseStoreFile.isNullOrBlank()) {
+            create("release") {
+                storeFile = file(releaseStoreFile)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
     }
 
     buildTypes {
         release {
+            signingConfig = signingConfigs.findByName("release")
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
@@ -46,6 +70,8 @@ android {
     sourceSets["main"].assets.srcDir(webAssets)
     tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }
         .configureEach { dependsOn(prepareWebAssets) }
+    tasks.matching { it.name.contains("lint", ignoreCase = true) }
+        .configureEach { dependsOn(prepareWebAssets) }
 }
 
 dependencies {
@@ -60,4 +86,5 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.1")
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
 }

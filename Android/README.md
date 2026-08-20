@@ -16,6 +16,14 @@
 
 Android 应用工程位于 `Android/project`，使用 Capacitor 复用 React 界面，并在 Kotlin 中运行本地任务队列、X 解析和下载服务。
 
+任务队列默认同时解析 4 条帖子，并在所有帖子之间共享 4 个媒体下载槽位。解析和下载使用独立调度器，因此长视频下载不会阻塞后续帖子的解析；同一帖包含多个媒体时也会并行保存。
+
+## X 登录与受保护帖子
+
+Android 版可在应用内打开独立的 X 登录 WebView。用户自行完成密码、验证码和 2FA；应用只提取 `auth_token` 与 `ct0`，使用 Android Keystore 的 AES-GCM 密钥加密到 `noBackupFilesDir`。登录 Activity 运行在 `:x_login` 进程及独立 WebView 数据目录中，保存完成后会清除该目录的 Cookie、缓存和网页存储，不会把凭据传给 React 页面。
+
+登录后可下载当前 X 账号本身有权查看的受保护帖子；账号未关注、权限被撤回或会话过期时仍会失败。此功能依赖 X 网页登录及内部 GraphQL 行为，X 改版后可能需要同步更新。
+
 ## 启用环境
 
 在项目根目录执行：
@@ -58,5 +66,22 @@ Pop-Location
 ```
 
 Debug APK 位于 `Android/project/app/build/outputs/apk/debug/app-debug.apk`；发布产物应复制到 `Android/artifacts`，签名文件不得提交到仓库。
+
+## 构建正式版
+
+正式版签名只从环境变量读取，密钥和密码不得写入仓库：
+
+```powershell
+$env:ANDROID_RELEASE_STORE_FILE = '<签名文件绝对路径>'
+$env:ANDROID_RELEASE_STORE_PASSWORD = '<签名库密码>'
+$env:ANDROID_RELEASE_KEY_ALIAS = '<密钥别名>'
+$env:ANDROID_RELEASE_KEY_PASSWORD = '<密钥密码>'
+
+Push-Location .\Android\project
+gradle assembleRelease bundleRelease --no-daemon
+Pop-Location
+```
+
+签名 APK 和 AAB 分别位于 `Android/project/app/build/outputs/apk/release/` 与 `Android/project/app/build/outputs/bundle/release/`。
 
 工具包、缓存和构建产物已通过本目录 `.gitignore` 排除，不会提交到 Git。

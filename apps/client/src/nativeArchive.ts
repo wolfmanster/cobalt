@@ -12,6 +12,10 @@ export interface LocalArchivePlugin {
   retryJob(input: { id: string }): Promise<DownloadJob>;
   clearHistory(): Promise<{ removed: number }>;
   getHealth(): Promise<{ ok: boolean; local: boolean }>;
+  getXSessionStatus(): Promise<{ configured: boolean }>;
+  startXLogin(): Promise<{ configured: boolean; canceled: boolean }>;
+  clearXSession(): Promise<{ configured: boolean }>;
+  readClipboard(): Promise<{ text: string }>;
   openMedia(input: { id: string }): Promise<void>;
   selectDownloadFolder(): Promise<{ selected: boolean; uri?: string }>;
   getDownloadFolder(): Promise<{ selected: boolean }>;

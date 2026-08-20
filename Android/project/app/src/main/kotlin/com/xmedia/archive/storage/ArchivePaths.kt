@@ -8,12 +8,18 @@ import java.time.format.DateTimeFormatter
 
 object ArchivePaths {
     private const val ROOT = "Download/X Media Archive"
+    // ext4 and many DocumentsProvider implementations cap one path segment at 255 UTF-8 bytes.
+    // Stay below that limit to leave room for provider-specific normalization.
+    private const val MAX_SEGMENT_UTF8_BYTES = 200
     private val chinaTime = ZoneId.of("Asia/Shanghai")
 
     fun postDirectory(metadata: ResolvedMetadata, tweetId: String): String {
         val author = sanitize("${metadata.authorName}@${metadata.username}", tweetId)
         val date = publishedDate(metadata.publishedAt)
-        val text = sanitize(metadata.text.ifBlank { tweetId }, tweetId, 140)
+        val postPrefix = "${date}_"
+        val postSuffix = "_${tweetId}"
+        val textByteBudget = MAX_SEGMENT_UTF8_BYTES - utf8Size(postPrefix) - utf8Size(postSuffix)
+        val text = sanitize(metadata.text.ifBlank { tweetId }, tweetId, 140, textByteBudget)
         val post = sanitize("${date}_${text}_${tweetId}", "${date}_${tweetId}_${tweetId}")
         return "$author/$post"
     }
@@ -36,7 +42,12 @@ object ArchivePaths {
         return instant?.atZone(chinaTime)?.toLocalDate()?.toString() ?: "unknown-date"
     }
 
-    private fun sanitize(value: String, fallback: String, maxLength: Int = 180): String {
+    private fun sanitize(
+        value: String,
+        fallback: String,
+        maxLength: Int = 180,
+        maxUtf8Bytes: Int = MAX_SEGMENT_UTF8_BYTES,
+    ): String {
         var segment = value
             .replace(Regex("[\\u0000-\\u001F\\u007F-\\u009F]"), "")
             .replace(Regex("[<>:\"/\\\\|?*]"), "_")
@@ -44,7 +55,27 @@ object ArchivePaths {
             .replace(Regex("[. ]+$"), "")
         if (segment.isBlank()) segment = fallback
         if (segment.matches(Regex("(?i)CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9]"))) segment = "_$segment"
-        segment = segment.take(maxLength).replace(Regex("[. ]+$"), "")
+        segment = truncateUtf8(segment, maxLength, maxUtf8Bytes).replace(Regex("[. ]+$"), "")
         return segment.ifBlank { fallback }
     }
+
+    private fun truncateUtf8(value: String, maxCodePoints: Int, maxBytes: Int): String {
+        val result = StringBuilder()
+        var index = 0
+        var codePoints = 0
+        var bytes = 0
+        while (index < value.length && codePoints < maxCodePoints) {
+            val codePoint = value.codePointAt(index)
+            val next = String(Character.toChars(codePoint))
+            val nextBytes = utf8Size(next)
+            if (bytes + nextBytes > maxBytes) break
+            result.append(next)
+            bytes += nextBytes
+            codePoints += 1
+            index += Character.charCount(codePoint)
+        }
+        return result.toString()
+    }
+
+    private fun utf8Size(value: String): Int = value.toByteArray(Charsets.UTF_8).size
 }

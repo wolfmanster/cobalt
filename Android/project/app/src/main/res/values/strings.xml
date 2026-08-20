@@ -1,4 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Veo Downloader</string>
+    <string name="x_login_cancel">取消</string>
+    <string name="x_login_opening">正在打开 X 安全登录页…</string>
+    <string name="x_login_save">保存登录</string>
+    <string name="x_login_loading">X 登录页加载中（%1$d%%）</string>
+    <string name="x_login_instruction">请在 X 页面完成登录、验证码和 2FA</string>
+    <string name="x_login_external_blocked">为保护登录信息，只允许在此窗口访问 X</string>
+    <string name="x_login_load_failed">页面加载失败，可返回后重试</string>
+    <string name="x_login_not_detected">尚未检测到完整登录，请先完成 X 登录</string>
+    <string name="x_login_saving">正在加密保存并清理网页登录状态…</string>
+    <string name="x_login_save_failed">无法安全保存登录</string>
+    <string name="x_login_save_failed_detail">无法安全保存 X 登录</string>
+    <string name="x_login_cleaning">正在清理临时网页登录状态…</string>
 </resources>

@@ -3,6 +3,7 @@ import { Capacitor } from '@capacitor/core';
 import { LocalArchive } from './nativeArchive';
 
 const native = Capacitor.isNativePlatform();
+export const xLoginSupported = native;
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(url, {
@@ -51,6 +52,31 @@ export function selectDownloadFolder() {
 export function getDownloadFolder() {
   if (native) return LocalArchive.getDownloadFolder();
   return Promise.resolve({ selected: true });
+}
+
+export function getXSessionStatus() {
+  if (native) return LocalArchive.getXSessionStatus();
+  return Promise.resolve({ configured: false });
+}
+
+export function startXLogin() {
+  if (native) return LocalArchive.startXLogin();
+  return Promise.reject(new Error('仅 Android 应用支持内置 X 登录'));
+}
+
+export function clearXSession() {
+  if (native) return LocalArchive.clearXSession();
+  return Promise.resolve({ configured: false });
+}
+
+export async function readClipboardText() {
+  try {
+    if (native) return (await LocalArchive.readClipboard()).text;
+    if (!navigator.clipboard?.readText) return '';
+    return await navigator.clipboard.readText();
+  } catch {
+    return '';
+  }
 }
 
 export function openMedia(id: string) {

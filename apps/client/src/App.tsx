@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Capacitor } from '@capacitor/core';
 import {
   Archive,
   ArrowDownToLine,
@@ -6,21 +7,27 @@ import {
   CircleAlert,
   Clock3,
   Download,
+  Facebook,
   FileText,
+  FolderCheck,
   FolderOpen,
   History,
   Image as ImageIcon,
+  Instagram,
+  Link2,
   LoaderCircle,
+  Music2,
   Pause,
-  Play,
   RotateCcw,
+  ShieldCheck,
   Trash2,
+  Twitch,
   Upload,
   Video,
   X,
-  Zap,
+  Youtube,
 } from 'lucide-react';
-import { cancelJob, clearHistory, createJobs, getDownloadFolder, listJobs, openMedia, retryJob, selectDownloadFolder, subscribeJobs } from './api';
+import { cancelJob, clearHistory, clearXSession, createJobs, getDownloadFolder, getXSessionStatus, listJobs, openMedia, readClipboardText, retryJob, selectDownloadFolder, startXLogin, subscribeJobs, xLoginSupported } from './api';
 import type { DownloadJob, JobStatus, MediaItem } from './types';
 
 const STATUS: Record<JobStatus, { label: string; className: string }> = {
@@ -60,11 +67,25 @@ function statusIcon(status: JobStatus) {
   return <Clock3 size={13} />;
 }
 
+function revealVideoPreview(video: HTMLVideoElement) {
+  if (video.currentTime > 0 || !Number.isFinite(video.duration) || video.duration <= 0) return;
+  video.currentTime = Math.min(0.05, video.duration / 2);
+}
+
 function MediaPreview({ media }: { media: MediaItem }) {
+  const previewUrl = Capacitor.convertFileSrc(media.previewUrl);
   if (media.kind === 'image' || media.kind === 'gif') {
-    return <img src={media.previewUrl} alt={media.filename} loading="lazy" />;
+    return <img src={previewUrl} alt={media.filename} loading="lazy" />;
   }
-  return <video src={media.previewUrl} controls preload="metadata" />;
+  return (
+    <video
+      src={previewUrl}
+      controls
+      playsInline
+      preload="metadata"
+      onLoadedMetadata={(event) => revealVideoPreview(event.currentTarget)}
+    />
+  );
 }
 
 function JobCard({ job, onAction }: { job: DownloadJob; onAction: (action: 'cancel' | 'retry', id: string) => void }) {
@@ -106,7 +127,7 @@ function JobCard({ job, onAction }: { job: DownloadJob; onAction: (action: 'canc
         {active && (
           <div className="progress-block">
             <div className="progress-copy">
-              <span>{job.status === 'queued' ? '等待空闲下载槽位' : job.status === 'resolving' ? '正在并行获取元数据与媒体' : `正在保存 ${job.media.length} 个媒体文件`}</span>
+              <span>{job.status === 'queued' ? '等待空闲解析槽位' : job.status === 'resolving' ? '正在并行获取元数据与媒体' : `正在并行保存 ${job.media.length} 个媒体文件`}</span>
               <strong>{job.progress}%</strong>
             </div>
             <div className="progress-track"><span style={{ width: `${job.progress}%` }} /></div>
@@ -167,11 +188,19 @@ export default function App() {
   const [dragging, setDragging] = useState(false);
   const [notice, setNotice] = useState('');
   const [choosingFolder, setChoosingFolder] = useState(false);
+  const [folderReady, setFolderReady] = useState(false);
+  const [sessionConfigured, setSessionConfigured] = useState(false);
+  const [showSessionPanel, setShowSessionPanel] = useState(false);
+  const [sessionBusy, setSessionBusy] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const urls = useMemo(() => extractUrls(input), [input]);
 
   useEffect(() => {
     void listJobs().then(setJobs).catch((error) => setNotice(error.message));
+    void getDownloadFolder().then((result) => setFolderReady(result.selected)).catch(() => undefined);
+    if (xLoginSupported) {
+      void getXSessionStatus().then((result) => setSessionConfigured(result.configured)).catch(() => undefined);
+    }
     const events = subscribeJobs(setJobs);
     return () => { void events.close(); };
   }, []);
@@ -204,6 +233,7 @@ export default function App() {
           setNotice('请选择下载文件夹后再加入队列');
           return;
         }
+        setFolderReady(true);
       }
       const result = await createJobs(urls);
       setInput('');
@@ -236,7 +266,10 @@ export default function App() {
     setChoosingFolder(true);
     try {
       const result = await selectDownloadFolder();
-      if (result.selected) setNotice('已保存下载文件夹；新任务将写入该文件夹');
+      if (result.selected) {
+        setFolderReady(true);
+        setNotice('已保存下载文件夹；新任务将写入该文件夹');
+      }
     } catch (error) {
       setNotice(error instanceof Error ? error.message : '无法选择下载文件夹');
     } finally {
@@ -248,93 +281,202 @@ export default function App() {
   const historyJobs = jobs.filter((job) => ['completed', 'failed', 'canceled'].includes(job.status));
   const visibleJobs = tab === 'queue' ? activeJobs : historyJobs;
   const completedToday = jobs.filter((job) => job.completedAt?.slice(0, 10) === new Date().toISOString().slice(0, 10)).length;
+  const completedTotal = jobs.filter((job) => job.status === 'completed').length;
+
+  function openComposer() {
+    const panel = document.querySelector<HTMLElement>('.ingest-panel');
+    const textarea = panel?.querySelector<HTMLTextAreaElement>('textarea');
+    panel?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    textarea?.blur();
+    void readClipboardText().then((clipboardText) => {
+      const value = clipboardText.trim();
+      if (value) setInput((current) => current.trim() ? `${current.trim()}\n${value}` : value);
+    }).catch(() => undefined);
+  }
+
+  async function connectX() {
+    setSessionBusy(true);
+    try {
+      const result = await startXLogin();
+      setSessionConfigured(result.configured);
+      if (!result.canceled && result.configured) {
+        setShowSessionPanel(false);
+        setNotice('X 登录已加密保存；现在可下载当前账号有权查看的受保护帖子');
+      }
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '无法打开 X 登录');
+    } finally {
+      setSessionBusy(false);
+    }
+  }
+
+  async function disconnectX() {
+    setSessionBusy(true);
+    try {
+      const result = await clearXSession();
+      setSessionConfigured(result.configured);
+      setShowSessionPanel(false);
+      setNotice('已移除本机保存的 X 登录；之后仅下载公开帖子');
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '无法移除 X 登录');
+    } finally {
+      setSessionBusy(false);
+    }
+  }
+
+  function jumpToTab(nextTab: 'queue' | 'history') {
+    setTab(nextTab);
+    document.querySelector('.workspace')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
 
   return (
     <div className="app-shell">
       <header className="topbar">
-        <a className="brand" href="#top"><span className="brand-mark">▶</span><span>Veo Downloader<small>VIDEO DOWNLOADER</small></span></a>
         <div className="topbar-actions">
           <button
-            className="folder-button"
+            className={`folder-button ${folderReady ? 'is-ready' : ''}`}
             type="button"
             title="选择或更改下载文件夹"
             onClick={() => void chooseDownloadFolder()}
             disabled={choosingFolder}
           >
-            {choosingFolder ? <LoaderCircle className="spin" size={15} /> : <FolderOpen size={15} />}
-            选择下载文件夹
+            {choosingFolder ? <LoaderCircle className="spin" size={17} /> : folderReady ? <FolderCheck size={17} /> : <FolderOpen size={17} />}
+            <span>{folderReady ? '文件夹已设置' : '选择下载文件夹'}</span>
           </button>
-          <div className="service-state"><span /> Cobalt 本地解析</div>
+          {xLoginSupported && (
+            <button
+              className={`session-button ${sessionConfigured ? 'is-ready' : ''}`}
+              type="button"
+              title={sessionConfigured ? '管理 X 登录' : '登录 X 以访问未公开帖子'}
+              onClick={() => setShowSessionPanel((visible) => !visible)}
+              disabled={sessionBusy}
+            >
+              {sessionBusy ? <LoaderCircle className="spin" size={17} /> : <ShieldCheck size={17} />}
+              <span>{sessionConfigured ? 'X 已登录' : '登录 X'}</span>
+            </button>
+          )}
+          <div className="service-state"><span /> 本地服务在线</div>
         </div>
       </header>
 
       <main id="top">
-        <section className="hero">
-          <div className="eyebrow"><Zap size={13} fill="currentColor" /> PUBLIC POSTS ONLY</div>
-          <h1>把公开帖子，<br /><em>妥善存下来。</em></h1>
-          <p>批量提取 X 帖子中的视频、图片与 GIF，同时保留必要的作者和正文信息。</p>
+        <section className="hero" aria-label="多平台媒体下载">
+          <div className="platform-scene" aria-hidden="true">
+            <div className="platform-orbit orbit-one" />
+            <div className="platform-orbit orbit-two" />
+            <div className="platform-core"><ArrowDownToLine size={34} /></div>
+            <div className="platform-chip platform-instagram"><Instagram size={22} /><span>Instagram</span></div>
+            <div className="platform-chip platform-youtube"><Youtube size={23} /><span>YouTube</span></div>
+            <div className="platform-chip platform-x"><b>𝕏</b></div>
+            <div className="platform-chip platform-tiktok"><Music2 size={21} /><span>TikTok</span></div>
+            <div className="platform-chip platform-facebook"><Facebook size={21} /><span>Facebook</span></div>
+            <div className="platform-chip platform-twitch"><Twitch size={21} /><span>Twitch</span></div>
+          </div>
         </section>
 
         <section className="ingest-panel">
           <div className="panel-heading">
-            <div><span>01</span><h2>添加帖子链接</h2></div>
-            <p>支持单条、多行粘贴，最多 200 条</p>
+            <div><span><Link2 size={17} /></span><div><h2>添加帖子链接</h2><small>每行一个，最多 200 条</small></div></div>
+            <div className="privacy-chip"><ShieldCheck size={13} /> {xLoginSupported && sessionConfigured ? '已启用账号访问' : '默认仅公开内容'}</div>
           </div>
-          <textarea
-            value={input}
-            onChange={(event) => setInput(event.target.value)}
-            placeholder={'https://x.com/user/status/123456789\nhttps://x.com/user/status/987654321'}
-            aria-label="X 帖子链接"
-          />
-          <div
-            className={`drop-zone ${dragging ? 'dragging' : ''}`}
-            onDragOver={(event) => { event.preventDefault(); setDragging(true); }}
-            onDragLeave={() => setDragging(false)}
-            onDrop={(event) => { event.preventDefault(); setDragging(false); void importFile(event.dataTransfer.files[0]); }}
-            onClick={() => fileRef.current?.click()}
-          >
-            <Upload size={17} /><span>拖入 TXT / CSV，或点击选择</span>
-            <input ref={fileRef} type="file" accept=".txt,.csv,text/plain,text/csv" hidden onChange={(event) => void importFile(event.target.files?.[0])} />
+          <div className="composer">
+            <textarea
+              value={input}
+              onChange={(event) => setInput(event.target.value)}
+              placeholder={'在这里粘贴 X 帖子链接…\nhttps://x.com/user/status/123456789'}
+              aria-label="X 帖子链接"
+            />
+            <div
+              className={`drop-zone ${dragging ? 'dragging' : ''}`}
+              onDragOver={(event) => { event.preventDefault(); setDragging(true); }}
+              onDragLeave={() => setDragging(false)}
+              onDrop={(event) => { event.preventDefault(); setDragging(false); void importFile(event.dataTransfer.files[0]); }}
+              onClick={() => fileRef.current?.click()}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') fileRef.current?.click(); }}
+            >
+              <Upload size={16} /><span>导入 TXT / CSV</span>
+              <input ref={fileRef} type="file" accept=".txt,.csv,text/plain,text/csv" hidden onChange={(event) => void importFile(event.target.files?.[0])} />
+            </div>
           </div>
           <div className="submit-row">
-            <div className="input-count"><FileText size={15} /><strong>{urls.length}</strong> 条可识别链接</div>
+            <div className={`input-count ${urls.length ? 'has-links' : ''}`}><FileText size={15} /><strong>{urls.length}</strong> 条链接已识别</div>
             <button className="primary-button" onClick={() => void submit()} disabled={!urls.length || submitting}>
-              {submitting ? <LoaderCircle className="spin" size={17} /> : <Play size={17} fill="currentColor" />}
-              加入下载队列
+              {submitting ? <LoaderCircle className="spin" size={18} /> : <ArrowDownToLine size={18} />}
+              开始下载
             </button>
           </div>
         </section>
 
+        {xLoginSupported && showSessionPanel && (
+          <section className="auth-session-panel" aria-label="X 登录设置">
+            <span className="auth-session-icon"><ShieldCheck size={21} /></span>
+            <div className="auth-session-copy">
+              <strong>{sessionConfigured ? 'X 登录已安全保存' : '下载当前账号可见的受保护帖子'}</strong>
+              <small>登录在隔离 WebView 中完成；应用只读取 auth_token 和 ct0，用 Android Keystore 加密后立即清除临时 Cookie 与网页存储。</small>
+            </div>
+            <div className="auth-session-actions">
+              {sessionConfigured ? (
+                <button className="danger-outline-button" type="button" onClick={() => void disconnectX()} disabled={sessionBusy}>移除登录</button>
+              ) : (
+                <button className="auth-login-button" type="button" onClick={() => void connectX()} disabled={sessionBusy}>
+                  {sessionBusy ? <LoaderCircle className="spin" size={16} /> : <ShieldCheck size={16} />}打开 X 登录
+                </button>
+              )}
+              <button className="auth-close-button" type="button" onClick={() => setShowSessionPanel(false)} aria-label="关闭 X 登录设置"><X size={16} /></button>
+            </div>
+          </section>
+        )}
+
+        <section className="quick-stats" aria-label="下载统计">
+          <div><span>今日完成</span><strong>{String(completedToday).padStart(2, '0')}</strong><i className="violet" /></div>
+          <div><span>正在处理</span><strong>{String(activeJobs.length).padStart(2, '0')}</strong><i className="orange" /></div>
+          <div><span>全部存档</span><strong>{String(completedTotal).padStart(2, '0')}</strong><i className="green" /></div>
+        </section>
+
         <section className="workspace">
           <div className="workspace-head">
-            <div className="tabs">
-              <button className={tab === 'queue' ? 'selected' : ''} onClick={() => setTab('queue')}><Archive size={17} />下载队列 <span>{activeJobs.length}</span></button>
-              <button className={tab === 'history' ? 'selected' : ''} onClick={() => setTab('history')}><History size={17} />历史记录 <span>{historyJobs.length}</span></button>
-            </div>
-            {tab === 'history' && historyJobs.length > 0 && <button className="clear-button" onClick={() => void clear()}><Trash2 size={14} />清除记录</button>}
+            <div className="workspace-title"><span>下载管理</span><h2>{tab === 'queue' ? '当前任务' : '历史记录'}</h2></div>
+            {tab === 'history' && historyJobs.length > 0 && <button className="clear-button" onClick={() => void clear()}><Trash2 size={15} />清除</button>}
           </div>
+          <div className="tabs" role="tablist" aria-label="下载任务筛选">
+              <button role="tab" aria-selected={tab === 'queue'} className={tab === 'queue' ? 'selected' : ''} onClick={() => setTab('queue')}><Archive size={17} />进行中 <span>{activeJobs.length}</span></button>
+              <button role="tab" aria-selected={tab === 'history'} className={tab === 'history' ? 'selected' : ''} onClick={() => setTab('history')}><History size={17} />已完成 <span>{historyJobs.length}</span></button>
+            </div>
 
           {visibleJobs.length ? (
             <div className="job-list">{visibleJobs.map((job) => <JobCard key={job.id} job={job} onAction={action} />)}</div>
           ) : (
             <div className="empty-state">
-              {tab === 'queue' ? <Pause size={28} /> : <History size={28} />}
-              <h3>{tab === 'queue' ? '队列目前是空的' : '还没有历史记录'}</h3>
-              <p>{tab === 'queue' ? '粘贴公开帖子链接，任务会在这里实时更新。' : '完成、失败或取消的任务会保留在这里。'}</p>
+              <span>{tab === 'queue' ? <Pause size={25} /> : <History size={25} />}</span>
+              <h3>{tab === 'queue' ? '准备好开始下载' : '这里还很安静'}</h3>
+              <p>{tab === 'queue' ? '添加链接后，下载进度会实时出现在这里。' : '完成、失败或取消的任务都会保留在这里。'}</p>
+              {tab === 'queue' && <button onClick={openComposer}><Link2 size={15} />添加第一个链接</button>}
             </div>
           )}
         </section>
 
-        <section className="stats-strip">
-          <div><span>今日完成</span><strong>{String(completedToday).padStart(2, '0')}</strong></div>
-          <div><span>队列进行中</span><strong>{String(activeJobs.length).padStart(2, '0')}</strong></div>
-          <div><span>存档总数</span><strong>{String(jobs.filter((job) => job.status === 'completed').length).padStart(2, '0')}</strong></div>
-          <div className="privacy-note"><Check size={15} /><span>无需 Cookie<br /><small>仅处理公开帖子</small></span></div>
+        <section className="privacy-note">
+          <span><ShieldCheck size={19} /></span>
+          <div><strong>{sessionConfigured ? '已启用受保护帖子下载' : '隐私优先'}</strong><small>{sessionConfigured ? '只使用 Keystore 加密的 X 会话，并仅发送给 X' : '无需登录时，不保存或发送任何 X Cookie'}</small></div>
+          <Check size={17} />
         </section>
       </main>
 
-      <footer className="page-footer"><span>媒体由本地 Cobalt 实例解析</span><span>不使用 X 官方 API · 不保存 Cookie</span></footer>
-      {notice && <div className="toast"><CircleAlert size={16} />{notice}<button onClick={() => setNotice('')}><X size={14} /></button></div>}
+      <footer className="page-footer"><span>媒体由本地服务解析与保存</span><span>{xLoginSupported && sessionConfigured ? 'X 会话经 Android Keystore 加密' : '公开帖子无需登录'}</span></footer>
+      <nav className="mobile-nav" aria-label="主导航">
+        <button className={tab === 'queue' ? 'selected' : ''} onClick={() => jumpToTab('queue')} aria-current={tab === 'queue' ? 'page' : undefined}>
+          <Archive size={20} /><span>进行中</span>{activeJobs.length > 0 && <b>{activeJobs.length}</b>}
+        </button>
+        <button className="mobile-add" onClick={openComposer} aria-label="添加下载链接">
+          <span><Link2 size={21} /></span><small>新建</small>
+        </button>
+        <button className={tab === 'history' ? 'selected' : ''} onClick={() => jumpToTab('history')} aria-current={tab === 'history' ? 'page' : undefined}>
+          <History size={20} /><span>已完成</span>{historyJobs.length > 0 && <b>{historyJobs.length}</b>}
+        </button>
+      </nav>
+      {notice && <div className="toast" role="status"><CircleAlert size={17} />{notice}<button onClick={() => setNotice('')} aria-label="关闭提示"><X size={15} /></button></div>}
     </div>
   );
 }

@@ -67,4 +67,21 @@ Pop-Location
 
 Debug APK 位于 `Android/project/app/build/outputs/apk/debug/app-debug.apk`；发布产物应复制到 `Android/artifacts`，签名文件不得提交到仓库。
 
+## 构建正式版
+
+正式版签名只从环境变量读取，密钥和密码不得写入仓库：
+
+```powershell
+$env:ANDROID_RELEASE_STORE_FILE = '<签名文件绝对路径>'
+$env:ANDROID_RELEASE_STORE_PASSWORD = '<签名库密码>'
+$env:ANDROID_RELEASE_KEY_ALIAS = '<密钥别名>'
+$env:ANDROID_RELEASE_KEY_PASSWORD = '<密钥密码>'
+
+Push-Location .\Android\project
+gradle assembleRelease bundleRelease --no-daemon
+Pop-Location
+```
+
+签名 APK 和 AAB 分别位于 `Android/project/app/build/outputs/apk/release/` 与 `Android/project/app/build/outputs/bundle/release/`。
+
 工具包、缓存和构建产物已通过本目录 `.gitignore` 排除，不会提交到 Git。

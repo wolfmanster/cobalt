@@ -46,6 +46,8 @@ android {
     sourceSets["main"].assets.srcDir(webAssets)
     tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }
         .configureEach { dependsOn(prepareWebAssets) }
+    tasks.matching { it.name.contains("lint", ignoreCase = true) }
+        .configureEach { dependsOn(prepareWebAssets) }
 }
 
 dependencies {
@@ -60,4 +62,5 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.1")
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
 }

@@ -9,7 +9,9 @@ import com.getcapacitor.PluginCall
 import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.CapacitorPlugin
 import com.getcapacitor.annotation.ActivityCallback
+import com.xmedia.archive.XLoginActivity
 import com.xmedia.archive.repository.ArchiveRepository
+import com.xmedia.archive.resolver.XAuthSessionStore
 import com.xmedia.archive.service.DownloadForegroundService
 import com.xmedia.archive.storage.DownloadDestination
 import kotlinx.coroutines.CoroutineScope
@@ -17,15 +19,18 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @CapacitorPlugin(name = "LocalArchive")
 class LocalArchivePlugin : Plugin() {
     private lateinit var repository: ArchiveRepository
+    private lateinit var sessionStore: XAuthSessionStore
     private val scope = CoroutineScope(Dispatchers.Main.immediate + Job())
 
     override fun load() {
         super.load()
         repository = ArchiveRepository(context)
+        sessionStore = XAuthSessionStore(context)
         scope.launch {
             repository.observeJobs().collectLatest {
                 notifyListeners("jobsChanged", JSObject().put("jobs", repository.jobsJson()))
@@ -76,6 +81,39 @@ class LocalArchivePlugin : Plugin() {
     @PluginMethod
     fun getHealth(call: PluginCall) {
         scope.launch { call.resolve(JSObject().put("ok", true).put("cobalt", true).put("local", true)) }
+    }
+
+    @PluginMethod
+    fun getXSessionStatus(call: PluginCall) {
+        scope.launch {
+            val configured = withContext(Dispatchers.IO) { sessionStore.read() != null }
+            call.resolve(JSObject().put("configured", configured))
+        }
+    }
+
+    @PluginMethod
+    fun startXLogin(call: PluginCall) {
+        startActivityForResult(call, Intent(context, XLoginActivity::class.java), "onXLoginFinished")
+    }
+
+    @ActivityCallback
+    private fun onXLoginFinished(call: PluginCall?, result: ActivityResult) {
+        if (call == null) return
+        scope.launch {
+            val configured = withContext(Dispatchers.IO) { sessionStore.read() != null }
+            call.resolve(JSObject()
+                .put("configured", configured)
+                .put("canceled", result.resultCode != android.app.Activity.RESULT_OK))
+        }
+    }
+
+    @PluginMethod
+    fun clearXSession(call: PluginCall) {
+        scope.launch {
+            runCatching { withContext(Dispatchers.IO) { sessionStore.clear() } }
+                .onSuccess { call.resolve(JSObject().put("configured", false)) }
+                .onFailure { error -> call.reject(error.message ?: "无法移除 X 会话") }
+        }
     }
 
     @PluginMethod

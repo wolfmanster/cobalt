@@ -3,6 +3,7 @@ package com.xmedia.archive.resolver
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import okhttp3.OkHttpClient
+import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -38,7 +39,15 @@ data class ResolvedPost(val tweetId: String, val canonicalUrl: String, val metad
 class XPostResolver(
     private val client: OkHttpClient = OkHttpClient(),
     private val audioBitrateResolver: (String) -> Int? = ::readAudioBitrate,
+    private val authorizedSession: () -> XAuthSession? = { null },
 ) {
+    // A manually supplied Cookie header is retained by OkHttp on cross-host redirects.
+    // GraphQL requests therefore never follow redirects while a session might be attached.
+    private val graphqlClient = client.newBuilder()
+        .followRedirects(false)
+        .followSslRedirects(false)
+        .build()
+
     fun parseUrl(raw: String): Pair<String, String> {
         val url = URI(raw.trim())
         val host = url.host?.lowercase() ?: throw IllegalArgumentException("链接缺少域名")
@@ -53,10 +62,37 @@ class XPostResolver(
 
     fun resolve(tweetId: String, signal: () -> Boolean = { false }): ResolvedPost {
         if (signal()) throw CancellationException("任务已取消")
-        val syndication = runCatching { requestSyndication(tweetId, signal) }.getOrNull()
-        if (syndication != null) return syndication
-        return resolveGraphql(tweetId, signal)
-            ?: throw IllegalStateException("帖子不存在、不是公开帖子，或暂时无法读取")
+        try {
+            return requestSyndication(tweetId, signal)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            // Protected, age-restricted, or temporarily unavailable posts continue through
+            // GraphQL. This keeps public posts cookie-free even when a session is configured.
+        }
+        return when (val guest = resolveGraphql(tweetId, signal)) {
+            is GraphqlOutcome.Resolved -> guest.post
+            GraphqlOutcome.Protected, GraphqlOutcome.RequiresSession -> resolveWithSessionOrThrow(tweetId, signal)
+            GraphqlOutcome.SessionRejected -> throw IllegalStateException("X 授权会话无效、已过期，或当前账号无权查看该帖子")
+            GraphqlOutcome.TemporaryFailure -> throw IllegalStateException("X 服务暂时不可用或请求过于频繁，请稍后重试")
+            GraphqlOutcome.Unavailable -> if (authorizedSession() != null) {
+                resolveWithSessionOrThrow(tweetId, signal)
+            } else {
+                throw IllegalStateException("帖子不存在、不是公开帖子，或暂时无法读取")
+            }
+        }
+    }
+
+    private fun resolveWithSessionOrThrow(tweetId: String, signal: () -> Boolean): ResolvedPost {
+        val session = authorizedSession()
+            ?: throw IllegalStateException("该帖子需要登录 X；请先配置授权会话")
+        return when (val authenticated = resolveGraphql(tweetId, signal, session)) {
+            is GraphqlOutcome.Resolved -> authenticated.post
+            GraphqlOutcome.Protected -> throw IllegalStateException("当前 X 账号无权查看该受保护帖子")
+            GraphqlOutcome.SessionRejected, GraphqlOutcome.RequiresSession -> throw IllegalStateException("X 授权会话无效、已过期，或当前账号无权查看该帖子")
+            GraphqlOutcome.TemporaryFailure -> throw IllegalStateException("X 服务暂时不可用或请求过于频繁，请稍后重试")
+            GraphqlOutcome.Unavailable -> throw IllegalStateException("帖子不存在、已不可用，或暂时无法读取")
+        }
     }
 
     private fun requestSyndication(tweetId: String, signal: () -> Boolean): ResolvedPost {
@@ -93,8 +129,9 @@ class XPostResolver(
         )
     }
 
-    private fun resolveGraphql(tweetId: String, signal: () -> Boolean): ResolvedPost? {
-        var token = guestToken() ?: return null
+    private fun resolveGraphql(tweetId: String, signal: () -> Boolean, session: XAuthSession? = null): GraphqlOutcome {
+        var token = if (session == null) guestToken() else ""
+        if (session == null && token.isNullOrBlank()) return GraphqlOutcome.Unavailable
         repeat(2) { attempt ->
             if (signal()) throw CancellationException("任务已取消")
             val url = GRAPHQL_URL.toHttpUrl().newBuilder()
@@ -102,42 +139,82 @@ class XPostResolver(
                 .addQueryParameter("features", GRAPHQL_FEATURES)
                 .addQueryParameter("fieldToggles", GRAPHQL_FIELD_TOGGLES)
                 .build()
-            val request = Request.Builder().url(url).headers(okhttp3.Headers.headersOf(
-                "User-Agent", USER_AGENT,
-                "Authorization", BEARER,
-                "X-Twitter-Client-Language", "en",
-                "X-Twitter-Active-User", "yes",
-                "X-Guest-Token", token,
-                "Accept-Language", "en",
-            )).build()
-            client.newCall(request).execute().use { response ->
-                if (response.code == 403 || response.code == 429) {
-                    if (attempt == 0) token = guestToken(forceReload = true) ?: return@repeat
-                    return@use
+            val request = Request.Builder().url(url).headers(graphqlHeaders(token, session)).build()
+            graphqlClient.newCall(request).execute().use { response ->
+                if (session == null && response.code in setOf(403, 404, 429)) {
+                    if (response.code in setOf(403, 429) && attempt == 0) {
+                        token = guestToken(forceReload = true) ?: return GraphqlOutcome.RequiresSession
+                        return@use
+                    }
+                    return GraphqlOutcome.RequiresSession
                 }
-                if (!response.isSuccessful) return@use
+                if (!response.isSuccessful) {
+                    if (session != null && response.code in setOf(401, 403)) return GraphqlOutcome.SessionRejected
+                    if (response.code == 429 || response.code >= 500) return GraphqlOutcome.TemporaryFailure
+                    return GraphqlOutcome.Unavailable
+                }
                 val root = JSONObject(response.body?.string() ?: "{}")
-                val result = findTweetResult(root, tweetId) ?: return@use
+                val result = findTweetResult(root, tweetId) ?: return GraphqlOutcome.Unavailable
+                unavailableOutcome(result)?.let { outcome ->
+                    return if (session != null && outcome == GraphqlOutcome.RequiresSession) GraphqlOutcome.SessionRejected else outcome
+                }
                 val base = if (result.optString("__typename") == "TweetWithVisibilityResults") result.optJSONObject("tweet") ?: result else result
-                val legacy = base.optJSONObject("legacy") ?: return@use
+                val legacy = base.optJSONObject("legacy") ?: return GraphqlOutcome.Unavailable
                 val media = legacy.optJSONObject("extended_entities")?.optJSONArray("media")
                     ?: legacy.optJSONObject("entities")?.optJSONArray("media")
                 val parsedMedia = parseMedia(media, tweetId)
-                if (parsedMedia.isEmpty()) return@use
+                if (parsedMedia.isEmpty()) return GraphqlOutcome.Unavailable
                 val user = base.optJSONObject("core")?.optJSONObject("user_results")?.optJSONObject("result")?.optJSONObject("legacy")
-                    ?: return@use
+                    ?: return GraphqlOutcome.Unavailable
                 val username = user.optString("screen_name")
                 val userId = user.optString("id_str")
-                if (username.isBlank() || userId.isBlank() || user.optBoolean("protected", false)) return@use
-                return ResolvedPost(tweetId, "https://x.com/i/status/$tweetId", ResolvedMetadata(
+                if (user.optBoolean("protected", false) && session == null) return GraphqlOutcome.Protected
+                if (username.isBlank() || userId.isBlank()) return GraphqlOutcome.Unavailable
+                return GraphqlOutcome.Resolved(ResolvedPost(tweetId, "https://x.com/i/status/$tweetId", ResolvedMetadata(
                     user.optString("name", username), username, userId,
                     user.optString("profile_image_url_https", "").replace("_normal.", "_400x400."),
                     legacy.optString("full_text", legacy.optString("text", "")), legacy.optString("lang", "und"),
                     legacy.optString("created_at", ""),
-                ), parsedMedia)
+                ), parsedMedia))
             }
         }
-        return null
+        return GraphqlOutcome.Unavailable
+    }
+
+    /** Cobalt-style guest headers by default, or an authenticated X session when supplied. */
+    internal fun graphqlHeaders(guestToken: String?, session: XAuthSession?): Headers {
+        val headers = Headers.Builder()
+            .add("User-Agent", USER_AGENT)
+            .add("Authorization", BEARER)
+            .add("X-Twitter-Client-Language", "en")
+            .add("X-Twitter-Active-User", "yes")
+            .add("Accept-Language", "en")
+        if (session == null) {
+            headers.add("X-Guest-Token", requireNotNull(guestToken))
+            headers.add("Cookie", "guest_id=v1:${requireNotNull(guestToken)}")
+        } else {
+            headers.add("X-Twitter-Auth-Type", "OAuth2Session")
+            headers.add("X-Csrf-Token", session.csrfToken)
+            headers.add("Cookie", "auth_token=${session.authToken}; ct0=${session.csrfToken}")
+        }
+        return headers.build()
+    }
+
+    private fun unavailableOutcome(result: JSONObject): GraphqlOutcome? {
+        if (result.optString("__typename") !in setOf("TweetUnavailable", "TweetTombstone")) return null
+        val reason = result.optJSONObject("result")?.optString("reason")
+        if (reason == "Protected") return GraphqlOutcome.Protected
+        val text = result.optJSONObject("tombstone")?.optJSONObject("text")?.optString("text").orEmpty()
+        return if (reason == "NsfwLoggedOut" || text.startsWith("Age-restricted")) GraphqlOutcome.RequiresSession else GraphqlOutcome.Unavailable
+    }
+
+    private sealed interface GraphqlOutcome {
+        data class Resolved(val post: ResolvedPost) : GraphqlOutcome
+        data object RequiresSession : GraphqlOutcome
+        data object SessionRejected : GraphqlOutcome
+        data object TemporaryFailure : GraphqlOutcome
+        data object Protected : GraphqlOutcome
+        data object Unavailable : GraphqlOutcome
     }
 
     private fun guestToken(forceReload: Boolean = false): String? {

@@ -16,6 +16,12 @@
 
 Android 应用工程位于 `Android/project`，使用 Capacitor 复用 React 界面，并在 Kotlin 中运行本地任务队列、X 解析和下载服务。
 
+## X 登录与受保护帖子
+
+Android 版可在应用内打开独立的 X 登录 WebView。用户自行完成密码、验证码和 2FA；应用只提取 `auth_token` 与 `ct0`，使用 Android Keystore 的 AES-GCM 密钥加密到 `noBackupFilesDir`。登录 Activity 运行在 `:x_login` 进程及独立 WebView 数据目录中，保存完成后会清除该目录的 Cookie、缓存和网页存储，不会把凭据传给 React 页面。
+
+登录后可下载当前 X 账号本身有权查看的受保护帖子；账号未关注、权限被撤回或会话过期时仍会失败。此功能依赖 X 网页登录及内部 GraphQL 行为，X 改版后可能需要同步更新。
+
 ## 启用环境
 
 在项目根目录执行：

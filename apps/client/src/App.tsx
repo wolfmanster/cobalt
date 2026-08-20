@@ -27,7 +27,7 @@ import {
   X,
   Youtube,
 } from 'lucide-react';
-import { cancelJob, clearHistory, createJobs, getDownloadFolder, listJobs, openMedia, retryJob, selectDownloadFolder, subscribeJobs } from './api';
+import { cancelJob, clearHistory, clearXSession, createJobs, getDownloadFolder, getXSessionStatus, listJobs, openMedia, retryJob, selectDownloadFolder, startXLogin, subscribeJobs, xLoginSupported } from './api';
 import type { DownloadJob, JobStatus, MediaItem } from './types';
 
 const STATUS: Record<JobStatus, { label: string; className: string }> = {
@@ -189,12 +189,18 @@ export default function App() {
   const [notice, setNotice] = useState('');
   const [choosingFolder, setChoosingFolder] = useState(false);
   const [folderReady, setFolderReady] = useState(false);
+  const [sessionConfigured, setSessionConfigured] = useState(false);
+  const [showSessionPanel, setShowSessionPanel] = useState(false);
+  const [sessionBusy, setSessionBusy] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const urls = useMemo(() => extractUrls(input), [input]);
 
   useEffect(() => {
     void listJobs().then(setJobs).catch((error) => setNotice(error.message));
     void getDownloadFolder().then((result) => setFolderReady(result.selected)).catch(() => undefined);
+    if (xLoginSupported) {
+      void getXSessionStatus().then((result) => setSessionConfigured(result.configured)).catch(() => undefined);
+    }
     const events = subscribeJobs(setJobs);
     return () => { void events.close(); };
   }, []);
@@ -282,6 +288,36 @@ export default function App() {
     window.setTimeout(() => document.querySelector<HTMLTextAreaElement>('.ingest-panel textarea')?.focus(), 350);
   }
 
+  async function connectX() {
+    setSessionBusy(true);
+    try {
+      const result = await startXLogin();
+      setSessionConfigured(result.configured);
+      if (!result.canceled && result.configured) {
+        setShowSessionPanel(false);
+        setNotice('X 登录已加密保存；现在可下载当前账号有权查看的受保护帖子');
+      }
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '无法打开 X 登录');
+    } finally {
+      setSessionBusy(false);
+    }
+  }
+
+  async function disconnectX() {
+    setSessionBusy(true);
+    try {
+      const result = await clearXSession();
+      setSessionConfigured(result.configured);
+      setShowSessionPanel(false);
+      setNotice('已移除本机保存的 X 登录；之后仅下载公开帖子');
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '无法移除 X 登录');
+    } finally {
+      setSessionBusy(false);
+    }
+  }
+
   function jumpToTab(nextTab: 'queue' | 'history') {
     setTab(nextTab);
     document.querySelector('.workspace')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -301,6 +337,18 @@ export default function App() {
             {choosingFolder ? <LoaderCircle className="spin" size={17} /> : folderReady ? <FolderCheck size={17} /> : <FolderOpen size={17} />}
             <span>{folderReady ? '文件夹已设置' : '选择下载文件夹'}</span>
           </button>
+          {xLoginSupported && (
+            <button
+              className={`session-button ${sessionConfigured ? 'is-ready' : ''}`}
+              type="button"
+              title={sessionConfigured ? '管理 X 登录' : '登录 X 以访问未公开帖子'}
+              onClick={() => setShowSessionPanel((visible) => !visible)}
+              disabled={sessionBusy}
+            >
+              {sessionBusy ? <LoaderCircle className="spin" size={17} /> : <ShieldCheck size={17} />}
+              <span>{sessionConfigured ? 'X 已登录' : '登录 X'}</span>
+            </button>
+          )}
           <div className="service-state"><span /> 本地服务在线</div>
         </div>
       </header>
@@ -323,7 +371,7 @@ export default function App() {
         <section className="ingest-panel">
           <div className="panel-heading">
             <div><span><Link2 size={17} /></span><div><h2>添加帖子链接</h2><small>每行一个，最多 200 条</small></div></div>
-            <div className="privacy-chip"><ShieldCheck size={13} /> 仅公开内容</div>
+            <div className="privacy-chip"><ShieldCheck size={13} /> {xLoginSupported && sessionConfigured ? '已启用账号访问' : '默认仅公开内容'}</div>
           </div>
           <div className="composer">
             <textarea
@@ -355,6 +403,26 @@ export default function App() {
           </div>
         </section>
 
+        {xLoginSupported && showSessionPanel && (
+          <section className="auth-session-panel" aria-label="X 登录设置">
+            <span className="auth-session-icon"><ShieldCheck size={21} /></span>
+            <div className="auth-session-copy">
+              <strong>{sessionConfigured ? 'X 登录已安全保存' : '下载当前账号可见的受保护帖子'}</strong>
+              <small>登录在隔离 WebView 中完成；应用只读取 auth_token 和 ct0，用 Android Keystore 加密后立即清除临时 Cookie 与网页存储。</small>
+            </div>
+            <div className="auth-session-actions">
+              {sessionConfigured ? (
+                <button className="danger-outline-button" type="button" onClick={() => void disconnectX()} disabled={sessionBusy}>移除登录</button>
+              ) : (
+                <button className="auth-login-button" type="button" onClick={() => void connectX()} disabled={sessionBusy}>
+                  {sessionBusy ? <LoaderCircle className="spin" size={16} /> : <ShieldCheck size={16} />}打开 X 登录
+                </button>
+              )}
+              <button className="auth-close-button" type="button" onClick={() => setShowSessionPanel(false)} aria-label="关闭 X 登录设置"><X size={16} /></button>
+            </div>
+          </section>
+        )}
+
         <section className="quick-stats" aria-label="下载统计">
           <div><span>今日完成</span><strong>{String(completedToday).padStart(2, '0')}</strong><i className="violet" /></div>
           <div><span>正在处理</span><strong>{String(activeJobs.length).padStart(2, '0')}</strong><i className="orange" /></div>
@@ -385,12 +453,12 @@ export default function App() {
 
         <section className="privacy-note">
           <span><ShieldCheck size={19} /></span>
-          <div><strong>隐私优先</strong><small>无需 Cookie，仅处理公开帖子</small></div>
+          <div><strong>{sessionConfigured ? '已启用受保护帖子下载' : '隐私优先'}</strong><small>{sessionConfigured ? '只使用 Keystore 加密的 X 会话，并仅发送给 X' : '无需登录时，不保存或发送任何 X Cookie'}</small></div>
           <Check size={17} />
         </section>
       </main>
 
-      <footer className="page-footer"><span>媒体由本地 Cobalt 实例解析</span><span>不使用 X 官方 API · 不保存 Cookie</span></footer>
+      <footer className="page-footer"><span>媒体由本地服务解析与保存</span><span>{xLoginSupported && sessionConfigured ? 'X 会话经 Android Keystore 加密' : '公开帖子无需登录'}</span></footer>
       <nav className="mobile-nav" aria-label="主导航">
         <button className={tab === 'queue' ? 'selected' : ''} onClick={() => jumpToTab('queue')} aria-current={tab === 'queue' ? 'page' : undefined}>
           <Archive size={20} /><span>进行中</span>{activeJobs.length > 0 && <b>{activeJobs.length}</b>}

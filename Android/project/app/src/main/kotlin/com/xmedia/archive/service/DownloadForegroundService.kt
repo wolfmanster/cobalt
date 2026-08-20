@@ -18,6 +18,7 @@ import com.xmedia.archive.data.JobStatus
 import com.xmedia.archive.data.MediaEntity
 import com.xmedia.archive.repository.ArchiveRepository
 import com.xmedia.archive.resolver.XPostResolver
+import com.xmedia.archive.resolver.XAuthSessionStore
 import com.xmedia.archive.storage.ArchivePaths
 import com.xmedia.archive.storage.DownloadDestination
 import kotlinx.coroutines.CancellationException
@@ -43,7 +44,7 @@ class DownloadForegroundService : Service() {
     private var running = false
     private var rerunRequested = false
     private lateinit var repository: ArchiveRepository
-    private val resolver = XPostResolver()
+    private val resolver by lazy { XPostResolver(authorizedSession = XAuthSessionStore(applicationContext)::read) }
     private val client = OkHttpClient()
 
     override fun onCreate() {

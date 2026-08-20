@@ -67,6 +67,26 @@ Pop-Location
 
 Debug APK 位于 `Android/project/app/build/outputs/apk/debug/app-debug.apk`；发布产物应复制到 `Android/artifacts`，签名文件不得提交到仓库。
 
+## CI
+
+`.github/workflows/android-ci.yml` 是 Android 的完整 GitHub CI，会在 push 到 `main`、Pull Request 和手动触发时执行：
+
+- 构建 `apps/client` Web 资源
+- 运行 Android 单元测试
+- 运行 `lintDebug`
+- 构建并上传 Debug APK
+- 上传测试和 lint 报告
+
+GitHub Actions 会缓存 pnpm store、Gradle 依赖和 Gradle build cache。普通 CI 不执行 Release 签名构建；Release 构建需要配置签名密钥和密码，只应在受信任的发布流程中执行。
+
+本地快速检查可以只运行客户端构建和单元测试：
+
+```powershell
+. .\Android\env.ps1
+pnpm --dir apps/client build
+& .\Android\gradle\current\bin\gradle.bat -p Android/project test --no-daemon
+```
+
 ## 构建正式版
 
 正式版签名只从环境变量读取，密钥和密码不得写入仓库：

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Capacitor } from '@capacitor/core';
 import {
   Archive,
   ArrowDownToLine,
@@ -66,11 +67,25 @@ function statusIcon(status: JobStatus) {
   return <Clock3 size={13} />;
 }
 
+function revealVideoPreview(video: HTMLVideoElement) {
+  if (video.currentTime > 0 || !Number.isFinite(video.duration) || video.duration <= 0) return;
+  video.currentTime = Math.min(0.05, video.duration / 2);
+}
+
 function MediaPreview({ media }: { media: MediaItem }) {
+  const previewUrl = Capacitor.convertFileSrc(media.previewUrl);
   if (media.kind === 'image' || media.kind === 'gif') {
-    return <img src={media.previewUrl} alt={media.filename} loading="lazy" />;
+    return <img src={previewUrl} alt={media.filename} loading="lazy" />;
   }
-  return <video src={media.previewUrl} controls preload="metadata" />;
+  return (
+    <video
+      src={previewUrl}
+      controls
+      playsInline
+      preload="metadata"
+      onLoadedMetadata={(event) => revealVideoPreview(event.currentTarget)}
+    />
+  );
 }
 
 function JobCard({ job, onAction }: { job: DownloadJob; onAction: (action: 'cancel' | 'retry', id: string) => void }) {

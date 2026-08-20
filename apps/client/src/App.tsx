@@ -127,7 +127,7 @@ function JobCard({ job, onAction }: { job: DownloadJob; onAction: (action: 'canc
         {active && (
           <div className="progress-block">
             <div className="progress-copy">
-              <span>{job.status === 'queued' ? '等待空闲下载槽位' : job.status === 'resolving' ? '正在并行获取元数据与媒体' : `正在保存 ${job.media.length} 个媒体文件`}</span>
+              <span>{job.status === 'queued' ? '等待空闲解析槽位' : job.status === 'resolving' ? '正在并行获取元数据与媒体' : `正在并行保存 ${job.media.length} 个媒体文件`}</span>
               <strong>{job.progress}%</strong>
             </div>
             <div className="progress-track"><span style={{ width: `${job.progress}%` }} /></div>

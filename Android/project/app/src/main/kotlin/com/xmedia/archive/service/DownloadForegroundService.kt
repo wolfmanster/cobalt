@@ -31,6 +31,10 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.time.Instant
@@ -43,6 +47,10 @@ class DownloadForegroundService : Service() {
     private val queueLock = Any()
     private var running = false
     private var rerunRequested = false
+    private val resolveSemaphore = Semaphore(MAX_RESOLVE_CONCURRENCY)
+    private val downloadSemaphore = Semaphore(MAX_DOWNLOAD_CONCURRENCY)
+    private val downloadProgress = ConcurrentHashMap<String, ConcurrentHashMap<String, Double>>()
+    private val progressLocks = ConcurrentHashMap<String, Mutex>()
     private lateinit var repository: ArchiveRepository
     private val resolver by lazy { XPostResolver(authorizedSession = XAuthSessionStore(applicationContext)::read) }
     private val client = OkHttpClient()
@@ -75,9 +83,7 @@ class DownloadForegroundService : Service() {
                 val jobs = ArchiveDatabase.get(this).dao().listJobs().filter { it.status == JobStatus.QUEUED.name.lowercase() }
                 if (jobs.isEmpty()) break
                 coroutineScope {
-                    jobs.chunked(MAX_CONCURRENCY).forEach { batch ->
-                        batch.map { job -> async { process(job) } }.awaitAll()
-                    }
+                    jobs.map { job -> async { process(job) } }.awaitAll()
                 }
             }
         } finally {
@@ -103,15 +109,21 @@ class DownloadForegroundService : Service() {
     private suspend fun process(initial: JobEntity) {
         var job = initial
         try {
-            job = job.copy(
-                status = JobStatus.RESOLVING.name.lowercase(),
-                progress = 4,
-                error = null,
-                attempts = job.attempts + 1,
-                updatedAt = Instant.now().toString(),
-            )
-            repository.update(job)
-            val resolved = resolver.resolve(job.tweetId) { canceledJobs.contains(job.id) }
+            val resolved = resolveSemaphore.withPermit {
+                val current = repository.getJob(job.id) ?: throw CancellationException("任务不存在")
+                if (current.status == JobStatus.CANCELED.name.lowercase() || canceledJobs.contains(job.id)) {
+                    throw CancellationException("任务已取消")
+                }
+                job = current.copy(
+                    status = JobStatus.RESOLVING.name.lowercase(),
+                    progress = 4,
+                    error = null,
+                    attempts = current.attempts + 1,
+                    updatedAt = Instant.now().toString(),
+                )
+                repository.update(job)
+                resolver.resolve(job.tweetId) { canceledJobs.contains(job.id) }
+            }
             coroutineContext.ensureActive()
             if (canceledJobs.contains(job.id)) throw CancellationException("任务已取消")
             val media = resolved.media.map {
@@ -138,7 +150,17 @@ class DownloadForegroundService : Service() {
             )
             repository.update(job)
             repository.replaceMedia(job.id, media)
-            media.forEachIndexed { index, item -> download(job, item, index, media.size, mediaDirectory) }
+            downloadProgress[job.id] = ConcurrentHashMap(media.associate { it.id to 0.0 })
+            coroutineScope {
+                media.map { item ->
+                    async {
+                        downloadSemaphore.withPermit {
+                            if (canceledJobs.contains(job.id)) throw CancellationException("任务已取消")
+                            download(job, item, mediaDirectory)
+                        }
+                    }
+                }.awaitAll()
+            }
             job = repository.getJob(job.id) ?: job
             if (job.status != JobStatus.CANCELED.name.lowercase() && !canceledJobs.contains(job.id)) {
                 repository.update(job.copy(status = JobStatus.COMPLETED.name.lowercase(), progress = 100, completedAt = Instant.now().toString()))
@@ -151,10 +173,13 @@ class DownloadForegroundService : Service() {
             if (current.status != JobStatus.CANCELED.name.lowercase()) {
                 repository.update(current.copy(status = JobStatus.FAILED.name.lowercase(), error = error.message ?: "下载失败"))
             }
+        } finally {
+            downloadProgress.remove(job.id)
+            progressLocks.remove(job.id)
         }
     }
 
-    private suspend fun download(job: JobEntity, item: MediaEntity, index: Int, count: Int, mediaDirectory: String) {
+    private suspend fun download(job: JobEntity, item: MediaEntity, mediaDirectory: String) {
         val request = Request.Builder().url(item.sourceUrl).header("User-Agent", "x-media-archive/0.1 Android").build()
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) throw IllegalStateException("媒体下载失败（HTTP ${response.code}）")
@@ -163,11 +188,13 @@ class DownloadForegroundService : Service() {
             val contentType = body.contentType()?.toString() ?: mimeFor(item.filename)
             val uri = DownloadDestination.createTarget(this, mediaDirectory, item.filename, contentType)
             try {
-                ArchiveDatabase.get(this).dao().upsertMedia(listOf(item.copy(contentType = contentType, mediaStoreUri = uri.toString())))
+                val activeItem = item.copy(contentType = contentType, totalBytes = total, mediaStoreUri = uri.toString())
+                ArchiveDatabase.get(this).dao().upsertMedia(listOf(activeItem))
                 contentResolver.openOutputStream(uri)?.use { output ->
                     body.byteStream().use { input ->
                         val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
                         var received = 0L
+                        var lastProgressAt = 0L
                         var read: Int
                         while (input.read(buffer).also { read = it } >= 0) {
                             coroutineContext.ensureActive()
@@ -175,20 +202,37 @@ class DownloadForegroundService : Service() {
                             if (read == 0) continue
                             output.write(buffer, 0, read)
                             received += read
-                            val fraction = total?.let { received.toDouble() / it } ?: (received.toDouble() / (5 * 1024 * 1024))
-                            val progress = (12 + ((index + fraction.coerceIn(0.0, 0.99)) / count) * 87).toInt()
-                            val current = repository.getJob(job.id) ?: job
-                            repository.update(current.copy(progress = progress, status = JobStatus.DOWNLOADING.name.lowercase()))
-                            updateNotification("正在保存 ${index + 1}/$count", progress)
+                            val now = System.currentTimeMillis()
+                            if (now - lastProgressAt >= PROGRESS_UPDATE_INTERVAL_MS) {
+                                lastProgressAt = now
+                                ArchiveDatabase.get(this).dao().upsertMedia(listOf(activeItem.copy(downloadedBytes = received)))
+                                val fraction = total?.let { received.toDouble() / it }
+                                    ?: (received.toDouble() / UNKNOWN_SIZE_ESTIMATE_BYTES)
+                                recordProgress(job.id, item.id, fraction.coerceIn(0.0, 0.99))
+                            }
                         }
                         val updated = item.copy(contentType = contentType, size = received, downloadedBytes = received, totalBytes = total, mediaStoreUri = uri.toString())
                         ArchiveDatabase.get(this).dao().upsertMedia(listOf(updated))
+                        recordProgress(job.id, item.id, 1.0)
                     }
                 } ?: throw IllegalStateException("无法写入媒体文件")
             } catch (error: Exception) {
                 contentResolver.delete(uri, null, null)
                 throw error
             }
+        }
+    }
+
+    private suspend fun recordProgress(jobId: String, mediaId: String, fraction: Double) {
+        val fractions = downloadProgress[jobId] ?: return
+        fractions[mediaId] = fraction
+        progressLocks.computeIfAbsent(jobId) { Mutex() }.withLock {
+            val current = repository.getJob(jobId) ?: return@withLock
+            if (current.status != JobStatus.DOWNLOADING.name.lowercase()) return@withLock
+            val aggregate = fractions.values.sum() / fractions.size.coerceAtLeast(1)
+            val progress = maxOf(current.progress, (12 + aggregate * 87).toInt().coerceAtMost(99))
+            repository.update(current.copy(progress = progress))
+            updateNotification("正在并行保存 ${fractions.size} 个媒体文件", progress)
         }
     }
 
@@ -227,7 +271,10 @@ class DownloadForegroundService : Service() {
     companion object {
         private const val CHANNEL_ID = "media-downloads"
         private const val NOTIFICATION_ID = 1001
-        private const val MAX_CONCURRENCY = 2
+        private const val MAX_RESOLVE_CONCURRENCY = 4
+        private const val MAX_DOWNLOAD_CONCURRENCY = 4
+        private const val PROGRESS_UPDATE_INTERVAL_MS = 180L
+        private const val UNKNOWN_SIZE_ESTIMATE_BYTES = 5.0 * 1024 * 1024
         private val canceledJobs = ConcurrentHashMap.newKeySet<String>()
 
         /** Returns false when Android temporarily forbids foreground-service starts. */

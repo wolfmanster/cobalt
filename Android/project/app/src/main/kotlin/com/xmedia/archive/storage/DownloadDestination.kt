@@ -18,6 +18,7 @@ object DownloadDestination {
     fun hasSelectedFolder(context: Context): Boolean =
         context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).contains(TREE_URI)
 
+    @Synchronized
     fun createTarget(context: Context, relativePostDirectory: String, filename: String, contentType: String): Uri {
         val savedTree = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).getString(TREE_URI, null)
             ?: throw IllegalStateException("请先选择下载文件夹")

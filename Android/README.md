@@ -16,6 +16,8 @@
 
 Android 应用工程位于 `Android/project`，使用 Capacitor 复用 React 界面，并在 Kotlin 中运行本地任务队列、X 解析和下载服务。
 
+任务队列默认同时解析 4 条帖子，并在所有帖子之间共享 4 个媒体下载槽位。解析和下载使用独立调度器，因此长视频下载不会阻塞后续帖子的解析；同一帖包含多个媒体时也会并行保存。
+
 ## X 登录与受保护帖子
 
 Android 版可在应用内打开独立的 X 登录 WebView。用户自行完成密码、验证码和 2FA；应用只提取 `auth_token` 与 `ct0`，使用 Android Keystore 的 AES-GCM 密钥加密到 `noBackupFilesDir`。登录 Activity 运行在 `:x_login` 进程及独立 WebView 数据目录中，保存完成后会清除该目录的 Cookie、缓存和网页存储，不会把凭据传给 React 页面。

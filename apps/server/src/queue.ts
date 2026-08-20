@@ -19,14 +19,26 @@ const EXTENSIONS: Record<string, string> = {
   'video/webm': 'webm',
 };
 
+function concurrency(name: string, fallback: number): number {
+  const configured = Number(process.env[name]);
+  return Number.isFinite(configured) && configured >= 1 ? Math.floor(configured) : fallback;
+}
+
 export class DownloadQueue extends EventEmitter {
-  private readonly pending: string[] = [];
-  private readonly active = new Map<string, AbortController>();
-  private readonly concurrency: number;
+  private readonly pendingResolve: string[] = [];
+  private readonly pendingDownload: string[] = [];
+  private readonly resolving = new Set<string>();
+  private readonly downloading = new Set<string>();
+  private readonly controllers = new Map<string, AbortController>();
+  private readonly resolveConcurrency: number;
+  private readonly downloadConcurrency: number;
+  private readonly mediaDownloadConcurrency: number;
 
   constructor(private readonly store: JobStore) {
     super();
-    this.concurrency = Math.max(1, Number(process.env.DOWNLOAD_CONCURRENCY ?? 2));
+    this.resolveConcurrency = concurrency('RESOLVE_CONCURRENCY', 4);
+    this.downloadConcurrency = concurrency('DOWNLOAD_CONCURRENCY', 2);
+    this.mediaDownloadConcurrency = concurrency('MEDIA_DOWNLOAD_CONCURRENCY', 2);
   }
 
   restore(): void {
@@ -36,19 +48,22 @@ export class DownloadQueue extends EventEmitter {
   }
 
   enqueue(jobId: string): void {
-    if (!this.pending.includes(jobId) && !this.active.has(jobId)) this.pending.push(jobId);
+    if (!this.isKnown(jobId)) this.pendingResolve.push(jobId);
     this.emitChange();
-    void this.pump();
+    this.pumpResolve();
   }
 
   cancel(jobId: string): boolean {
     const job = this.store.get(jobId);
     if (!job || ['completed', 'failed', 'canceled'].includes(job.status)) return false;
-    const index = this.pending.indexOf(jobId);
-    if (index >= 0) this.pending.splice(index, 1);
-    this.active.get(jobId)?.abort();
+    this.removePending(this.pendingResolve, jobId);
+    this.removePending(this.pendingDownload, jobId);
+    this.controllers.get(jobId)?.abort(new Error('任务已取消'));
     this.store.update(jobId, { status: 'canceled', error: undefined });
+    if (!this.resolving.has(jobId) && !this.downloading.has(jobId)) this.controllers.delete(jobId);
     this.emitChange();
+    this.pumpResolve();
+    this.pumpDownload();
     return true;
   }
 
@@ -66,21 +81,51 @@ export class DownloadQueue extends EventEmitter {
     return true;
   }
 
-  private async pump(): Promise<void> {
-    while (this.active.size < this.concurrency && this.pending.length) {
-      const jobId = this.pending.shift();
-      if (!jobId) return;
+  private isKnown(jobId: string): boolean {
+    return this.pendingResolve.includes(jobId)
+      || this.pendingDownload.includes(jobId)
+      || this.resolving.has(jobId)
+      || this.downloading.has(jobId);
+  }
+
+  private removePending(queue: string[], jobId: string): void {
+    const index = queue.indexOf(jobId);
+    if (index >= 0) queue.splice(index, 1);
+  }
+
+  private pumpResolve(): void {
+    while (this.resolving.size < this.resolveConcurrency && this.pendingResolve.length) {
+      const jobId = this.pendingResolve.shift();
+      if (!jobId || this.store.get(jobId)?.status !== 'queued') continue;
       const controller = new AbortController();
-      this.active.set(jobId, controller);
-      void this.process(jobId, controller).finally(() => {
-        this.active.delete(jobId);
+      this.controllers.set(jobId, controller);
+      this.resolving.add(jobId);
+      void this.resolveJob(jobId, controller).finally(() => {
+        this.resolving.delete(jobId);
+        if (!this.pendingDownload.includes(jobId) && !this.downloading.has(jobId)) this.controllers.delete(jobId);
         this.emitChange();
-        void this.pump();
+        this.pumpResolve();
+        this.pumpDownload();
       });
     }
   }
 
-  private async process(jobId: string, controller: AbortController): Promise<void> {
+  private pumpDownload(): void {
+    while (this.downloading.size < this.downloadConcurrency && this.pendingDownload.length) {
+      const jobId = this.pendingDownload.shift();
+      const controller = jobId ? this.controllers.get(jobId) : undefined;
+      if (!jobId || !controller || controller.signal.aborted || this.store.get(jobId)?.status !== 'downloading') continue;
+      this.downloading.add(jobId);
+      void this.downloadJob(jobId, controller).finally(() => {
+        this.downloading.delete(jobId);
+        this.controllers.delete(jobId);
+        this.emitChange();
+        this.pumpDownload();
+      });
+    }
+  }
+
+  private async resolveJob(jobId: string, controller: AbortController): Promise<void> {
     const job = this.store.get(jobId);
     if (!job) return;
 
@@ -97,15 +142,24 @@ export class DownloadQueue extends EventEmitter {
         fetchPostMetadata(job.tweetId, controller.signal),
         resolveMedia(job.canonicalUrl, job.tweetId, controller.signal),
       ]);
+      controller.signal.throwIfAborted();
       if (!media.length) throw new Error('帖子中没有可下载的媒体');
 
       this.store.update(jobId, { metadata, media, status: 'downloading', progress: 12 });
+      this.pendingDownload.push(jobId);
       this.emitChange();
+    } catch (error) {
+      this.finishWithError(jobId, controller, error);
+    }
+  }
 
-      for (let index = 0; index < media.length; index += 1) {
-        await this.downloadMedia(job, media[index]!, index, media.length, controller.signal);
-      }
+  private async downloadJob(jobId: string, controller: AbortController): Promise<void> {
+    const job = this.store.get(jobId);
+    if (!job) return;
 
+    try {
+      await this.downloadMediaInParallel(job, controller.signal);
+      controller.signal.throwIfAborted();
       this.store.update(jobId, {
         status: 'completed',
         progress: 100,
@@ -113,23 +167,70 @@ export class DownloadQueue extends EventEmitter {
       });
       this.emitChange();
     } catch (error) {
-      if (controller.signal.aborted) {
-        if (this.store.get(jobId)?.status !== 'canceled') this.store.update(jobId, { status: 'canceled' });
-      } else {
-        this.store.update(jobId, {
-          status: 'failed',
-          error: error instanceof Error ? error.message : '未知错误',
-        });
-      }
-      this.emitChange();
+      this.finishWithError(jobId, controller, error);
     }
+  }
+
+  private async downloadMediaInParallel(job: DownloadJob, signal: AbortSignal): Promise<void> {
+    const controller = new AbortController();
+    const abort = () => controller.abort(signal.reason);
+    if (signal.aborted) abort();
+    else signal.addEventListener('abort', abort, { once: true });
+
+    let nextIndex = 0;
+    let firstError: unknown;
+    const worker = async () => {
+      while (!controller.signal.aborted) {
+        const index = nextIndex;
+        nextIndex += 1;
+        const media = job.media[index];
+        if (!media) return;
+        try {
+          await this.downloadMedia(job, media, index, controller.signal);
+        } catch (error) {
+          if (firstError === undefined) firstError = error;
+          controller.abort(error);
+          return;
+        }
+      }
+    };
+
+    try {
+      const workerCount = Math.min(this.mediaDownloadConcurrency, job.media.length);
+      await Promise.all(Array.from({ length: workerCount }, worker));
+    } finally {
+      signal.removeEventListener('abort', abort);
+    }
+    if (firstError !== undefined) throw firstError;
+    signal.throwIfAborted();
+  }
+
+  private finishWithError(jobId: string, controller: AbortController, error: unknown): void {
+    if (controller.signal.aborted) {
+      if (this.store.get(jobId)?.status !== 'canceled') this.store.update(jobId, { status: 'canceled' });
+    } else {
+      this.store.update(jobId, {
+        status: 'failed',
+        error: error instanceof Error ? error.message : '未知错误',
+      });
+    }
+    this.emitChange();
+  }
+
+  private progressFor(job: DownloadJob): number {
+    if (!job.media.length) return 12;
+    const completedFraction = job.media.reduce((sum, item) => {
+      if (item.size !== undefined && item.downloadedBytes >= item.size) return sum + 1;
+      if (item.totalBytes) return sum + Math.min(item.downloadedBytes / item.totalBytes, 0.99);
+      return sum + Math.min(item.downloadedBytes / (5 * 1024 * 1024), 0.9);
+    }, 0);
+    return Math.round(12 + (completedFraction / job.media.length) * 87);
   }
 
   private async downloadMedia(
     job: DownloadJob,
     media: MediaItem,
     index: number,
-    mediaCount: number,
     signal: AbortSignal,
   ): Promise<void> {
     const headers: Record<string, string> = { 'user-agent': 'x-media-archive/0.1' };
@@ -165,12 +266,10 @@ export class DownloadQueue extends EventEmitter {
       transform: (chunk: Buffer, _encoding, callback) => {
         received += chunk.length;
         media.downloadedBytes = received;
-        const fraction = total ? Math.min(received / total, 0.99) : Math.min(received / (5 * 1024 * 1024), 0.9);
-        job.progress = Math.round(12 + ((index + fraction) / mediaCount) * 87);
         const now = Date.now();
         if (now - lastEmitted > 180) {
           lastEmitted = now;
-          this.store.update(job.id, { media: job.media, progress: job.progress });
+          this.store.update(job.id, { media: job.media, progress: this.progressFor(job) });
           this.emitChange();
         }
         callback(null, chunk);
@@ -182,7 +281,8 @@ export class DownloadQueue extends EventEmitter {
       await fsp.rename(partialPath, finalPath);
       media.size = received;
       media.downloadedBytes = received;
-      this.store.update(job.id, { media: job.media });
+      this.store.update(job.id, { media: job.media, progress: this.progressFor(job) });
+      this.emitChange();
     } catch (error) {
       await fsp.rm(partialPath, { force: true }).catch(() => undefined);
       throw error;

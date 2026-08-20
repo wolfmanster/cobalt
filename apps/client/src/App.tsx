@@ -283,11 +283,11 @@ export default function App() {
   const completedToday = jobs.filter((job) => job.completedAt?.slice(0, 10) === new Date().toISOString().slice(0, 10)).length;
   const completedTotal = jobs.filter((job) => job.status === 'completed').length;
 
-  function focusComposer() {
+  function openComposer() {
     const panel = document.querySelector<HTMLElement>('.ingest-panel');
     const textarea = panel?.querySelector<HTMLTextAreaElement>('textarea');
     panel?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    textarea?.focus();
+    textarea?.blur();
     void readClipboardText().then((clipboardText) => {
       const value = clipboardText.trim();
       if (value) setInput((current) => current.trim() ? `${current.trim()}\n${value}` : value);
@@ -452,7 +452,7 @@ export default function App() {
               <span>{tab === 'queue' ? <Pause size={25} /> : <History size={25} />}</span>
               <h3>{tab === 'queue' ? '准备好开始下载' : '这里还很安静'}</h3>
               <p>{tab === 'queue' ? '添加链接后，下载进度会实时出现在这里。' : '完成、失败或取消的任务都会保留在这里。'}</p>
-              {tab === 'queue' && <button onClick={focusComposer}><Link2 size={15} />添加第一个链接</button>}
+              {tab === 'queue' && <button onClick={openComposer}><Link2 size={15} />添加第一个链接</button>}
             </div>
           )}
         </section>
@@ -469,7 +469,7 @@ export default function App() {
         <button className={tab === 'queue' ? 'selected' : ''} onClick={() => jumpToTab('queue')} aria-current={tab === 'queue' ? 'page' : undefined}>
           <Archive size={20} /><span>进行中</span>{activeJobs.length > 0 && <b>{activeJobs.length}</b>}
         </button>
-        <button className="mobile-add" onClick={focusComposer} aria-label="添加下载链接">
+        <button className="mobile-add" onClick={openComposer} aria-label="添加下载链接">
           <span><Link2 size={21} /></span><small>新建</small>
         </button>
         <button className={tab === 'history' ? 'selected' : ''} onClick={() => jumpToTab('history')} aria-current={tab === 'history' ? 'page' : undefined}>

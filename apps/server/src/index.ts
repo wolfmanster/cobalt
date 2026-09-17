@@ -9,6 +9,7 @@ import express from 'express';
 import cors from 'cors';
 import { z } from 'zod';
 import { JobStore } from './store.js';
+import { jobList } from './job-list.js';
 import { DownloadQueue } from './queue.js';
 import { parseXPostUrl } from './x-url.js';
 import type { DownloadJob } from './types.js';
@@ -50,12 +51,10 @@ app.get('/api/health', async (_req, res) => {
 app.get('/api/jobs', (req, res) => {
   const historyOffset = Math.max(0, Number.parseInt(String(req.query.historyOffset ?? '0'), 10) || 0);
   const historyLimit = Math.min(50, Math.max(1, Number.parseInt(String(req.query.historyLimit ?? '25'), 10) || 25));
-  const jobs = store.list();
-  const active = jobs.filter((job) => !['completed', 'failed', 'canceled'].includes(job.status));
-  const history = jobs.filter((job) => ['completed', 'failed', 'canceled'].includes(job.status));
+  const result = jobList(store.list(), historyOffset, historyLimit);
   res.json({
-    jobs: [...active, ...history.slice(historyOffset, historyOffset + historyLimit)].map(publicJob),
-    historyTotal: history.length,
+    ...result,
+    jobs: result.jobs.map(publicJob),
   });
 });
 

@@ -18,6 +18,7 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
 export interface JobList {
   jobs: DownloadJob[];
   historyTotal: number;
+  completedToday: number;
 }
 
 export function listJobs(options: { historyOffset?: number; historyLimit?: number } = {}) {

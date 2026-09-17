@@ -2,7 +2,7 @@ import { registerPlugin, type PluginListenerHandle } from '@capacitor/core';
 import type { DownloadJob } from './types';
 
 export interface LocalArchivePlugin {
-  listJobs(input?: { historyOffset?: number; historyLimit?: number }): Promise<{ jobs: DownloadJob[]; historyTotal: number }>;
+  listJobs(input?: { historyOffset?: number; historyLimit?: number }): Promise<{ jobs: DownloadJob[]; historyTotal: number; completedToday: number }>;
   createJobs(input: { urls: string[] }): Promise<{
     created: DownloadJob[];
     duplicates: DownloadJob[];

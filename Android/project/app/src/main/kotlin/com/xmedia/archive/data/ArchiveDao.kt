@@ -24,6 +24,9 @@ interface ArchiveDao {
     @Query("SELECT COUNT(*) FROM jobs WHERE status IN ('completed', 'failed', 'canceled')")
     suspend fun historyCount(): Int
 
+    @Query("SELECT COUNT(*) FROM jobs WHERE status = 'completed' AND substr(completedAt, 1, 10) = :utcDate")
+    suspend fun completedOnDate(utcDate: String): Int
+
     @Query("SELECT * FROM jobs WHERE id = :id")
     suspend fun getJob(id: String): JobEntity?
 

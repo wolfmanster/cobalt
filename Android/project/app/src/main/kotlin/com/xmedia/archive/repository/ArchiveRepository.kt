@@ -90,6 +90,7 @@ class ArchiveRepository(context: Context) {
         return JSONObject()
             .put("jobs", JSONArray((active + history).map { job -> toJson(job, dao.mediaForJob(job.id)) }))
             .put("historyTotal", dao.historyCount())
+            .put("completedToday", dao.completedOnDate(Instant.now().toString().take(10)))
     }
 
     suspend fun jobJson(id: String): JSONObject? = dao.getJob(id)?.let { toJson(it, dao.mediaForJob(id)) }

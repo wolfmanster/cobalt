@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createJobRefresh } from './jobRefresh';
 import { Capacitor } from '@capacitor/core';
 import {
   Archive,
@@ -182,6 +183,7 @@ function JobCard({ job, onAction }: { job: DownloadJob; onAction: (action: 'canc
 export default function App() {
   const [jobs, setJobs] = useState<DownloadJob[]>([]);
   const [historyTotal, setHistoryTotal] = useState(0);
+  const [completedToday, setCompletedToday] = useState(0);
   const [historyPage, setHistoryPage] = useState(0);
   const [input, setInput] = useState('');
   const [tab, setTab] = useState<'queue' | 'history'>('queue');
@@ -198,14 +200,14 @@ export default function App() {
   const historyPageRef = useRef(0);
   const urls = useMemo(() => extractUrls(input), [input]);
 
-  const refreshJobs = useCallback(async () => {
-    const result = await listJobs({
-      historyOffset: historyPageRef.current * HISTORY_PAGE_SIZE,
-      historyLimit: HISTORY_PAGE_SIZE,
-    });
+  const loadJobs = useMemo(() => createJobRefresh(listJobs, HISTORY_PAGE_SIZE, (result, page) => {
     setJobs(result.jobs);
     setHistoryTotal(result.historyTotal);
-  }, []);
+    setCompletedToday(result.completedToday);
+    historyPageRef.current = page;
+    setHistoryPage(page);
+  }), []);
+  const refreshJobs = useCallback(() => loadJobs(historyPageRef.current), [loadJobs]);
 
   const submitUrls = useCallback(async (requestedUrls: string[]) => {
     if (!requestedUrls.length) return;
@@ -316,8 +318,6 @@ export default function App() {
   const activeJobs = jobs.filter((job) => ['queued', 'resolving', 'downloading'].includes(job.status));
   const historyJobs = jobs.filter((job) => ['completed', 'failed', 'canceled'].includes(job.status));
   const visibleJobs = tab === 'queue' ? activeJobs : historyJobs;
-  const completedToday = jobs.filter((job) => job.completedAt?.slice(0, 10) === new Date().toISOString().slice(0, 10)).length;
-  const completedTotal = jobs.filter((job) => job.status === 'completed').length;
 
   function openComposer() {
     const panel = document.querySelector<HTMLElement>('.ingest-panel');
@@ -373,7 +373,6 @@ export default function App() {
     const lastPage = Math.max(0, Math.ceil(historyTotal / HISTORY_PAGE_SIZE) - 1);
     const nextPage = Math.min(Math.max(page, 0), lastPage);
     historyPageRef.current = nextPage;
-    setHistoryPage(nextPage);
     void refreshJobs().catch((error) => setNotice(error.message));
   }
 

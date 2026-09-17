@@ -171,6 +171,7 @@ export default function App() {
   const [notice, setNotice] = useState('');
   const [choosingFolder, setChoosingFolder] = useState(false);
   const [clearing, setClearing] = useState(false);
+  const [clearConfirmationOpen, setClearConfirmationOpen] = useState(false);
   const [folderReady, setFolderReady] = useState(false);
   const [serviceHealthy, setServiceHealthy] = useState<boolean | null>(null);
   const [sessionConfigured, setSessionConfigured] = useState(false);
@@ -292,7 +293,7 @@ export default function App() {
   }
 
   async function clear() {
-    if (!window.confirm('确定清除全部下载历史吗？此操作不会删除已保存的媒体文件。')) return;
+    setClearConfirmationOpen(false);
     setClearing(true);
     try {
       const { removed } = await clearHistory();
@@ -305,6 +306,10 @@ export default function App() {
     } finally {
       setClearing(false);
     }
+  }
+
+  function requestClearHistory() {
+    setClearConfirmationOpen(true);
   }
 
   async function openJobMedia(id: string) {
@@ -489,7 +494,7 @@ export default function App() {
         <section className="workspace">
           <div className="workspace-head">
             <div className="workspace-title"><span>下载管理</span><h2>{tab === 'queue' ? '正在下载' : '历史记录'}</h2></div>
-            {tab === 'history' && historyTotal > 0 && <button className="clear-button" type="button" onClick={() => void clear()} disabled={clearing}>{clearing ? <LoaderCircle className="spin" size={15} /> : <Trash2 size={15} />}{clearing ? '正在清除' : '清除'}</button>}
+            {tab === 'history' && historyTotal > 0 && <button className="clear-button" type="button" onClick={requestClearHistory} disabled={clearing}>{clearing ? <LoaderCircle className="spin" size={15} /> : <Trash2 size={15} />}{clearing ? '正在清除' : '清除'}</button>}
           </div>
           <div className="tabs" role="tablist" aria-label="下载任务筛选">
               <button role="tab" aria-selected={tab === 'queue'} className={tab === 'queue' ? 'selected' : ''} onClick={() => setTab('queue')}><Archive size={17} />进行中 <span>{activeJobs.length}</span></button>
@@ -536,6 +541,16 @@ export default function App() {
           <History size={20} /><span>历史</span>{historyTotal > 0 && <b>{historyTotal}</b>}
         </button>
       </nav>
+      {clearConfirmationOpen && <div className="confirmation-backdrop">
+        <section className="confirmation-dialog" role="alertdialog" aria-modal="true" aria-labelledby="clear-history-title" aria-describedby="clear-history-description">
+          <h2 id="clear-history-title">清除下载历史？</h2>
+          <p id="clear-history-description">此操作会移除完成、失败和取消任务的历史记录，但不会删除已保存的媒体文件。</p>
+          <div className="confirmation-actions">
+            <button type="button" className="confirmation-cancel" autoFocus onClick={() => setClearConfirmationOpen(false)}>取消</button>
+            <button type="button" className="confirmation-danger" onClick={() => void clear()} disabled={clearing}>{clearing ? '正在清除' : '清除历史'}</button>
+          </div>
+        </section>
+      </div>}
       {notice && <div className="toast" role="status"><CircleAlert size={17} />{notice}<button onClick={() => setNotice('')} aria-label="关闭提示"><X size={15} /></button></div>}
     </div>
   );

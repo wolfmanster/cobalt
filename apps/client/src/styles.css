@@ -321,6 +321,15 @@ main { width: min(1120px, calc(100% - 56px)); margin: 0 auto; }
 .toast { position: fixed; z-index: 40; left: 50%; bottom: 26px; max-width: calc(100vw - 32px); padding: 13px 14px; border-radius: 15px; display: flex; align-items: center; gap: 8px; color: white; background: #302d38; box-shadow: 0 14px 34px rgba(25, 22, 34, .28); font-size: 11px; transform: translateX(-50%); }
 .toast > svg { color: #d8ccff; flex: none; }
 .toast button { margin-left: 4px; padding: 3px; border: 0; display: grid; color: #c9c5cf; background: transparent; cursor: pointer; }
+.confirmation-backdrop { position: fixed; z-index: 50; inset: 0; padding: 24px; display: grid; place-items: center; background: rgba(16, 20, 47, .32); backdrop-filter: blur(5px); }
+.confirmation-dialog { width: min(100%, 410px); padding: 26px; border: 1px solid #e4e2eb; border-radius: 24px; color: var(--ink); background: var(--surface); box-shadow: 0 24px 64px rgba(20, 20, 44, .24); }
+.confirmation-dialog h2 { margin: 0; font-size: 20px; letter-spacing: -.03em; }
+.confirmation-dialog p { margin: 12px 0 0; color: var(--muted); font-size: 13px; line-height: 1.65; }
+.confirmation-actions { margin-top: 24px; display: flex; justify-content: flex-end; gap: 10px; }
+.confirmation-actions button { min-height: 42px; padding: 0 15px; border-radius: 13px; font: inherit; font-size: 12px; font-weight: 800; cursor: pointer; }
+.confirmation-cancel { border: 1px solid var(--outline); color: var(--ink); background: var(--surface-high); }
+.confirmation-danger { border: 0; color: white; background: var(--danger); }
+.confirmation-danger:disabled { opacity: .62; cursor: wait; }
 .spin { animation: spin .9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
@@ -692,6 +701,8 @@ main { width: min(1120px, calc(100% - 56px)); margin: 0 auto; }
   .mobile-add > small { display: none; }
   .mobile-nav button b { top: 7px; margin-left: 34px; }
   .toast { bottom: calc(113px + env(safe-area-inset-bottom)); }
+  .confirmation-backdrop { padding: 24px; }
+  .confirmation-dialog { padding: 24px; border-radius: 22px; }
 }
 
 @media (max-width: 430px) {

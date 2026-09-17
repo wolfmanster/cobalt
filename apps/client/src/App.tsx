@@ -7,7 +7,6 @@ import {
   Check,
   CircleAlert,
   Clock3,
-  Download,
   FileText,
   FolderCheck,
   FolderOpen,
@@ -15,7 +14,6 @@ import {
   History,
   Image as ImageIcon,
   Link2,
-  List,
   LoaderCircle,
   Pause,
   RotateCcw,
@@ -25,7 +23,7 @@ import {
   Video,
   X,
 } from 'lucide-react';
-import { cancelJob, clearHistory, clearXSession, consumeSharedContent, createJobs, getDownloadFolder, getXSessionStatus, listJobs, openMedia, readClipboardText, retryJob, selectDownloadFolder, startXLogin, subscribeJobs, subscribeSharedContent, xLoginSupported } from './api';
+import { cancelJob, clearHistory, clearXSession, consumeSharedContent, createJobs, getDownloadFolder, getHealth, getXSessionStatus, listJobs, openMedia, readClipboardText, retryJob, selectDownloadFolder, startXLogin, subscribeJobs, subscribeSharedContent, xLoginSupported } from './api';
 import type { DownloadJob, JobStatus, MediaItem } from './types';
 
 const HISTORY_PAGE_SIZE = 25;
@@ -88,7 +86,7 @@ function MediaPreview({ media }: { media: MediaItem }) {
   );
 }
 
-function JobCard({ job, onAction }: { job: DownloadJob; onAction: (action: 'cancel' | 'retry', id: string) => void }) {
+function JobCard({ job, onAction, onOpenMedia }: { job: DownloadJob; onAction: (action: 'cancel' | 'retry', id: string) => void; onOpenMedia: (id: string) => void }) {
   const active = ['queued', 'resolving', 'downloading'].includes(job.status);
   const complete = job.status === 'completed';
   const totalSize = job.media.reduce((sum, item) => sum + (item.size ?? 0), 0);
@@ -141,16 +139,7 @@ function JobCard({ job, onAction }: { job: DownloadJob; onAction: (action: 'canc
                 <MediaPreview media={media} />
                 <div className="media-caption">
                   <span>{media.kind === 'video' ? <Video size={13} /> : <ImageIcon size={13} />}{media.filename}</span>
-                  <a
-                    href={media.downloadUrl}
-                    title="下载"
-                    onClick={(event) => {
-                      if (media.downloadUrl.startsWith('content:')) {
-                        event.preventDefault();
-                        void openMedia(media.id);
-                      }
-                    }}
-                  ><Download size={15} /></a>
+                  <button type="button" title={`打开 ${media.filename}`} aria-label={`打开 ${media.filename}`} onClick={() => onOpenMedia(media.id)}><FolderOpen size={15} /></button>
                 </div>
               </div>
             ))}
@@ -163,17 +152,7 @@ function JobCard({ job, onAction }: { job: DownloadJob; onAction: (action: 'canc
         <div className="job-actions">
           {active && <button className="text-button danger-text" onClick={() => onAction('cancel', job.id)}><X size={15} />取消</button>}
           {(job.status === 'failed' || job.status === 'canceled') && <button className="text-button" onClick={() => onAction('retry', job.id)}><RotateCcw size={14} />重试</button>}
-          {complete && <a
-            className="text-button"
-            href={job.media[0]?.downloadUrl}
-            onClick={(event) => {
-              const firstMedia = job.media[0];
-              if (firstMedia?.downloadUrl.startsWith('content:')) {
-                event.preventDefault();
-                void openMedia(firstMedia.id);
-              }
-            }}
-          ><ArrowDownToLine size={15} />{job.media.length > 1 ? '逐个下载' : '下载文件'}</a>}
+          {complete && job.media.length === 1 && <button type="button" className="text-button" onClick={() => onOpenMedia(job.media[0].id)}><FolderOpen size={15} />打开文件</button>}
         </div>
       </footer>
     </article>
@@ -191,7 +170,9 @@ export default function App() {
   const [dragging, setDragging] = useState(false);
   const [notice, setNotice] = useState('');
   const [choosingFolder, setChoosingFolder] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const [folderReady, setFolderReady] = useState(false);
+  const [serviceHealthy, setServiceHealthy] = useState<boolean | null>(null);
   const [sessionConfigured, setSessionConfigured] = useState(false);
   const [showSessionPanel, setShowSessionPanel] = useState(false);
   const [sessionBusy, setSessionBusy] = useState(false);
@@ -267,6 +248,24 @@ export default function App() {
     return () => window.clearTimeout(timeout);
   }, [notice]);
 
+  useEffect(() => {
+    let disposed = false;
+    const refreshHealth = async () => {
+      try {
+        const health = await getHealth();
+        if (!disposed) setServiceHealthy(health.ok && health.local);
+      } catch {
+        if (!disposed) setServiceHealthy(false);
+      }
+    };
+    void refreshHealth();
+    const interval = window.setInterval(() => void refreshHealth(), 30_000);
+    return () => {
+      disposed = true;
+      window.clearInterval(interval);
+    };
+  }, []);
+
   const importFile = useCallback(async (file?: File) => {
     if (!file) return;
     if (!/\.(txt|csv)$/i.test(file.name)) {
@@ -293,11 +292,27 @@ export default function App() {
   }
 
   async function clear() {
-    const { removed } = await clearHistory();
-    historyPageRef.current = 0;
-    setHistoryPage(0);
-    await refreshJobs();
-    setNotice(`已清除 ${removed} 条历史记录`);
+    if (!window.confirm('确定清除全部下载历史吗？此操作不会删除已保存的媒体文件。')) return;
+    setClearing(true);
+    try {
+      const { removed } = await clearHistory();
+      historyPageRef.current = 0;
+      setHistoryPage(0);
+      await refreshJobs();
+      setNotice(`已清除 ${removed} 条历史记录`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '无法清除历史记录');
+    } finally {
+      setClearing(false);
+    }
+  }
+
+  async function openJobMedia(id: string) {
+    try {
+      await openMedia(id);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '无法打开媒体文件');
+    }
   }
 
   async function chooseDownloadFolder() {
@@ -369,6 +384,11 @@ export default function App() {
     document.querySelector('.workspace')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
+  function jumpHome() {
+    setTab('queue');
+    document.querySelector('#top')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
   function showHistoryPage(page: number) {
     const lastPage = Math.max(0, Math.ceil(historyTotal / HISTORY_PAGE_SIZE) - 1);
     const nextPage = Math.min(Math.max(page, 0), lastPage);
@@ -401,7 +421,7 @@ export default function App() {
             {sessionBusy ? <LoaderCircle className="spin" size={17} /> : <ShieldCheck size={17} />}
             <span>{sessionConfigured ? 'X 已登录' : '登录 X'}</span>
           </button>
-          <div className="service-state"><span /> 本地服务在线</div>
+          <div className={`service-state ${serviceHealthy === false ? 'is-offline' : ''}`}><span /> {serviceHealthy === null ? '正在检查本地服务' : serviceHealthy ? '本地服务可用' : '本地服务不可用'}</div>
         </div>
       </header>
 
@@ -426,7 +446,7 @@ export default function App() {
               onClick={() => fileRef.current?.click()}
               role="button"
               tabIndex={0}
-              onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') fileRef.current?.click(); }}
+              onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); fileRef.current?.click(); } }}
             >
               <Upload size={16} /><span>导入 TXT / CSV</span>
               <input ref={fileRef} type="file" accept=".txt,.csv,text/plain,text/csv" hidden onChange={(event) => void importFile(event.target.files?.[0])} />
@@ -469,7 +489,7 @@ export default function App() {
         <section className="workspace">
           <div className="workspace-head">
             <div className="workspace-title"><span>下载管理</span><h2>{tab === 'queue' ? '正在下载' : '历史记录'}</h2></div>
-            {tab === 'history' && historyTotal > 0 && <button className="clear-button" onClick={() => void clear()}><Trash2 size={15} />清除</button>}
+            {tab === 'history' && historyTotal > 0 && <button className="clear-button" type="button" onClick={() => void clear()} disabled={clearing}>{clearing ? <LoaderCircle className="spin" size={15} /> : <Trash2 size={15} />}{clearing ? '正在清除' : '清除'}</button>}
           </div>
           <div className="tabs" role="tablist" aria-label="下载任务筛选">
               <button role="tab" aria-selected={tab === 'queue'} className={tab === 'queue' ? 'selected' : ''} onClick={() => setTab('queue')}><Archive size={17} />进行中 <span>{activeJobs.length}</span></button>
@@ -478,7 +498,7 @@ export default function App() {
 
           {visibleJobs.length ? (
             <>
-              <div className="job-list">{visibleJobs.map((job) => <JobCard key={job.id} job={job} onAction={action} />)}</div>
+              <div className="job-list">{visibleJobs.map((job) => <JobCard key={job.id} job={job} onAction={action} onOpenMedia={(id) => void openJobMedia(id)} />)}</div>
               {tab === 'history' && historyTotal > HISTORY_PAGE_SIZE && (
                 <nav className="history-pagination" aria-label="下载历史分页">
                   <button onClick={() => showHistoryPage(historyPage - 1)} disabled={historyPage === 0}>上一页</button>
@@ -506,20 +526,14 @@ export default function App() {
 
       <footer className="page-footer"><span>媒体由本地服务解析与保存</span><span>{xLoginSupported && sessionConfigured ? 'X 会话经 Android Keystore 加密' : '公开帖子无需登录'}</span></footer>
       <nav className="mobile-nav" aria-label="主导航">
-        <button className={tab === 'queue' ? 'selected' : ''} onClick={() => jumpToTab('queue')} aria-current={tab === 'queue' ? 'page' : undefined}>
+        <button className={tab === 'queue' ? 'selected' : ''} onClick={jumpHome} aria-current={tab === 'queue' ? 'page' : undefined}>
           <Home size={21} /><span>首页</span>
-        </button>
-        <button onClick={() => jumpToTab('queue')}>
-          <List size={21} /><span>正在下载</span>{activeJobs.length > 0 && <b>{activeJobs.length}</b>}
         </button>
         <button className="mobile-add" onClick={openComposer} aria-label="添加下载链接">
           <span><Link2 size={21} /></span><small>新建</small>
         </button>
-        <button onClick={() => jumpToTab('history')}>
-          <FolderOpen size={21} /><span>媒体库</span>
-        </button>
         <button className={tab === 'history' ? 'selected' : ''} onClick={() => jumpToTab('history')} aria-current={tab === 'history' ? 'page' : undefined}>
-          <History size={20} /><span>已完成</span>{historyTotal > 0 && <b>{historyTotal}</b>}
+          <History size={20} /><span>历史</span>{historyTotal > 0 && <b>{historyTotal}</b>}
         </button>
       </nav>
       {notice && <div className="toast" role="status"><CircleAlert size={17} />{notice}<button onClick={() => setNotice('')} aria-label="关闭提示"><X size={15} /></button></div>}

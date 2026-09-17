@@ -64,6 +64,11 @@ export function getDownloadFolder() {
   return Promise.resolve({ selected: true });
 }
 
+export function getHealth() {
+  if (native) return LocalArchive.getHealth();
+  return Promise.resolve({ ok: false, local: false });
+}
+
 export function getXSessionStatus() {
   if (native) return LocalArchive.getXSessionStatus();
   return Promise.resolve({ configured: false });

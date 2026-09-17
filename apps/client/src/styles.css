@@ -88,6 +88,7 @@ button:focus-visible, a:focus-visible, textarea:focus-visible, [role="button"]:f
 .session-button.is-ready { color: var(--green); border-color: #b8d9c6; background: #edf8f1; }
 .service-state { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 11px; font-weight: 600; }
 .service-state > span { width: 8px; height: 8px; border-radius: 50%; background: #38a975; box-shadow: 0 0 0 5px rgba(56, 169, 117, .12); }
+.service-state.is-offline > span { background: var(--danger); box-shadow: 0 0 0 5px rgba(179, 38, 30, .12); }
 
 main { width: min(1120px, calc(100% - 56px)); margin: 0 auto; }
 
@@ -257,6 +258,7 @@ main { width: min(1120px, calc(100% - 56px)); margin: 0 auto; }
 .workspace-title > span { color: var(--primary); font-size: 10px; font-weight: 800; letter-spacing: .1em; }
 .workspace-title h2 { margin: 5px 0 0; font-size: 26px; letter-spacing: -.045em; }
 .clear-button { min-height: 38px; padding: 0 12px; border: 0; border-radius: 12px; display: flex; align-items: center; gap: 6px; color: var(--danger); background: #ffedea; font-size: 11px; font-weight: 700; cursor: pointer; }
+.clear-button:disabled { opacity: .62; cursor: wait; }
 .tabs { width: fit-content; margin-top: 22px; padding: 5px; border-radius: 17px; display: flex; gap: 4px; background: #ebe8f0; }
 .tabs button { position: relative; min-height: 40px; padding: 0 15px; border: 0; border-radius: 13px; display: flex; align-items: center; gap: 7px; color: var(--muted); background: transparent; font-size: 11px; font-weight: 700; cursor: pointer; transition: color .18s ease, background .18s ease, box-shadow .18s ease; }
 .tabs button.selected { color: var(--primary-strong); background: var(--surface); box-shadow: 0 3px 12px rgba(46, 39, 68, .10); }
@@ -296,7 +298,7 @@ main { width: min(1120px, calc(100% - 56px)); margin: 0 auto; }
 .media-tile > img, .media-tile > video { width: 100%; height: 180px; display: block; object-fit: cover; background: #17151d; }
 .media-caption { min-height: 40px; padding: 8px 10px; display: flex; align-items: center; justify-content: space-between; background: var(--surface); }
 .media-caption span { min-width: 0; display: flex; align-items: center; gap: 6px; overflow: hidden; font: 500 9px ui-monospace, SFMono-Regular, Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
-.media-caption a { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; flex: none; color: var(--primary); background: var(--primary-soft); }
+.media-caption a, .media-caption button { width: 30px; height: 30px; border: 0; border-radius: 50%; display: grid; place-items: center; flex: none; color: var(--primary); background: var(--primary-soft); cursor: pointer; }
 .job-footer { min-height: 50px; padding: 0 18px 0 78px; border-top: 1px solid var(--outline); display: flex; align-items: center; justify-content: space-between; color: var(--muted); font: 500 9px ui-monospace, SFMono-Regular, Consolas, monospace; background: rgba(242,239,248,.5); }
 .job-actions { display: flex; align-items: center; gap: 8px; }
 .text-button { min-height: 34px; padding: 0 9px; border: 0; border-radius: 10px; display: flex; align-items: center; gap: 5px; color: var(--primary-strong); background: transparent; font-family: inherit; font-size: 10px; font-weight: 800; cursor: pointer; }
@@ -674,7 +676,7 @@ main { width: min(1120px, calc(100% - 56px)); margin: 0 auto; }
   .mobile-nav {
     height: calc(99px + env(safe-area-inset-bottom));
     padding: 0 14px env(safe-area-inset-bottom);
-    grid-template-columns: 1fr 1.25fr 78px 1.15fr 1fr;
+    grid-template-columns: 1fr 78px 1fr;
     border: 1px solid #e8e8ee;
     border-bottom: 0;
     border-radius: 30px 30px 0 0;
@@ -712,7 +714,7 @@ main { width: min(1120px, calc(100% - 56px)); margin: 0 auto; }
   .quick-stats strong { font-size: 33px; }
   .workspace { margin: 48px 18px 0; }
   .workspace-title h2 { font-size: 27px; }
-  .mobile-nav { grid-template-columns: .94fr 1.2fr 66px 1.1fr .94fr; padding-left: 5px; padding-right: 5px; }
+  .mobile-nav { grid-template-columns: 1fr 66px 1fr; padding-left: 5px; padding-right: 5px; }
   .mobile-nav button { font-size: 8px; }
   .mobile-nav .mobile-add { transform: translateY(-21px); }
   .mobile-add > span { width: 57px; height: 57px; }

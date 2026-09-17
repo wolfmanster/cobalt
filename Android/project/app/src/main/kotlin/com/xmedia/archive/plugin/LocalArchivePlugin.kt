@@ -104,7 +104,10 @@ class LocalArchivePlugin : Plugin() {
 
     @PluginMethod
     fun getHealth(call: PluginCall) {
-        scope.launch { call.resolve(JSObject().put("ok", true).put("cobalt", true).put("local", true)) }
+        scope.launch {
+            val healthy = runCatching { repository.hasPendingJobs() }.isSuccess
+            call.resolve(JSObject().put("ok", healthy).put("cobalt", true).put("local", true))
+        }
     }
 
     @PluginMethod
@@ -206,9 +209,12 @@ class LocalArchivePlugin : Plugin() {
                 return@launch
             }
             val intent = Intent(action).apply {
-                data = if (action == Intent.ACTION_VIEW) Uri.parse(media.first) else null
-                type = media.second
-                if (action == Intent.ACTION_SEND) putExtra(Intent.EXTRA_STREAM, Uri.parse(media.first))
+                if (action == Intent.ACTION_VIEW) {
+                    setDataAndType(Uri.parse(media.first), media.second)
+                } else {
+                    type = media.second
+                    putExtra(Intent.EXTRA_STREAM, Uri.parse(media.first))
+                }
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
             val launchIntent = if (action == Intent.ACTION_SEND) Intent.createChooser(intent, "分享媒体") else intent

@@ -38,7 +38,7 @@ class LocalArchivePlugin : Plugin() {
         sessionStore = XAuthSessionStore(context)
         scope.launch {
             repository.observeJobs().collectLatest {
-                notifyListeners("jobsChanged", JSObject().put("jobs", repository.jobsJson()))
+                notifyListeners("jobsChanged", JSObject())
             }
         }
         scope.launch {
@@ -65,7 +65,9 @@ class LocalArchivePlugin : Plugin() {
 
     @PluginMethod
     fun listJobs(call: PluginCall) {
-        scope.launch { call.resolve(JSObject().put("jobs", repository.jobsJson())) }
+        val historyOffset = (call.getInt("historyOffset") ?: 0).coerceAtLeast(0)
+        val historyLimit = (call.getInt("historyLimit") ?: 25).coerceIn(1, 50)
+        scope.launch { call.resolve(JSObject(repository.jobListJson(historyOffset, historyLimit).toString())) }
     }
 
     @PluginMethod

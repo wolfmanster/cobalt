@@ -7,28 +7,27 @@ import {
   CircleAlert,
   Clock3,
   Download,
-  Facebook,
   FileText,
   FolderCheck,
   FolderOpen,
+  Home,
   History,
   Image as ImageIcon,
-  Instagram,
   Link2,
+  List,
   LoaderCircle,
-  Music2,
   Pause,
   RotateCcw,
   ShieldCheck,
   Trash2,
-  Twitch,
   Upload,
   Video,
   X,
-  Youtube,
 } from 'lucide-react';
 import { cancelJob, clearHistory, clearXSession, consumeSharedContent, createJobs, getDownloadFolder, getXSessionStatus, listJobs, openMedia, readClipboardText, retryJob, selectDownloadFolder, startXLogin, subscribeJobs, subscribeSharedContent, xLoginSupported } from './api';
 import type { DownloadJob, JobStatus, MediaItem } from './types';
+
+const HISTORY_PAGE_SIZE = 25;
 
 const STATUS: Record<JobStatus, { label: string; className: string }> = {
   queued: { label: '等待中', className: 'neutral' },
@@ -182,6 +181,8 @@ function JobCard({ job, onAction }: { job: DownloadJob; onAction: (action: 'canc
 
 export default function App() {
   const [jobs, setJobs] = useState<DownloadJob[]>([]);
+  const [historyTotal, setHistoryTotal] = useState(0);
+  const [historyPage, setHistoryPage] = useState(0);
   const [input, setInput] = useState('');
   const [tab, setTab] = useState<'queue' | 'history'>('queue');
   const [submitting, setSubmitting] = useState(false);
@@ -194,7 +195,17 @@ export default function App() {
   const [sessionBusy, setSessionBusy] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const handledSharedLinks = useRef(new Set<string>());
+  const historyPageRef = useRef(0);
   const urls = useMemo(() => extractUrls(input), [input]);
+
+  const refreshJobs = useCallback(async () => {
+    const result = await listJobs({
+      historyOffset: historyPageRef.current * HISTORY_PAGE_SIZE,
+      historyLimit: HISTORY_PAGE_SIZE,
+    });
+    setJobs(result.jobs);
+    setHistoryTotal(result.historyTotal);
+  }, []);
 
   const submitUrls = useCallback(async (requestedUrls: string[]) => {
     if (!requestedUrls.length) return;
@@ -233,12 +244,12 @@ export default function App() {
   }, [submitUrls]);
 
   useEffect(() => {
-    void listJobs().then(setJobs).catch((error) => setNotice(error.message));
+    void refreshJobs().catch((error) => setNotice(error.message));
     void getDownloadFolder().then((result) => setFolderReady(result.selected)).catch(() => undefined);
     if (xLoginSupported) {
       void getXSessionStatus().then((result) => setSessionConfigured(result.configured)).catch(() => undefined);
     }
-    const events = subscribeJobs(setJobs);
+    const events = subscribeJobs(() => { void refreshJobs().catch((error) => setNotice(error.message)); });
     const shared = subscribeSharedContent((text) => {
       void receiveSharedContent(text);
     });
@@ -246,7 +257,7 @@ export default function App() {
       if (result.text) void receiveSharedContent(result.text);
     });
     return () => { void events.close(); void shared.close(); };
-  }, [receiveSharedContent]);
+  }, [receiveSharedContent, refreshJobs]);
 
   useEffect(() => {
     if (!notice) return;
@@ -281,6 +292,9 @@ export default function App() {
 
   async function clear() {
     const { removed } = await clearHistory();
+    historyPageRef.current = 0;
+    setHistoryPage(0);
+    await refreshJobs();
     setNotice(`已清除 ${removed} 条历史记录`);
   }
 
@@ -317,6 +331,10 @@ export default function App() {
   }
 
   async function connectX() {
+    if (!xLoginSupported) {
+      setNotice('请在 Android 应用中使用内置 X 登录；auth_token 与 ct0 会通过 Keystore 加密保存');
+      return;
+    }
     setSessionBusy(true);
     try {
       const result = await startXLogin();
@@ -351,6 +369,14 @@ export default function App() {
     document.querySelector('.workspace')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
+  function showHistoryPage(page: number) {
+    const lastPage = Math.max(0, Math.ceil(historyTotal / HISTORY_PAGE_SIZE) - 1);
+    const nextPage = Math.min(Math.max(page, 0), lastPage);
+    historyPageRef.current = nextPage;
+    setHistoryPage(nextPage);
+    void refreshJobs().catch((error) => setNotice(error.message));
+  }
+
   return (
     <div className="app-shell">
       <header className="topbar">
@@ -365,47 +391,32 @@ export default function App() {
             {choosingFolder ? <LoaderCircle className="spin" size={17} /> : folderReady ? <FolderCheck size={17} /> : <FolderOpen size={17} />}
             <span>{folderReady ? '文件夹已设置' : '选择下载文件夹'}</span>
           </button>
-          {xLoginSupported && (
-            <button
-              className={`session-button ${sessionConfigured ? 'is-ready' : ''}`}
-              type="button"
-              title={sessionConfigured ? '管理 X 登录' : '登录 X 以访问未公开帖子'}
-              onClick={() => setShowSessionPanel((visible) => !visible)}
-              disabled={sessionBusy}
-            >
-              {sessionBusy ? <LoaderCircle className="spin" size={17} /> : <ShieldCheck size={17} />}
-              <span>{sessionConfigured ? 'X 已登录' : '登录 X'}</span>
-            </button>
-          )}
+          <button
+            className={`session-button ${sessionConfigured ? 'is-ready' : ''}`}
+            type="button"
+            title={sessionConfigured ? '管理已保存的 X 登录' : '登录 X 并加密保存 auth_token、ct0'}
+            aria-label={sessionConfigured ? '管理已保存的 X 登录' : '登录 X 并加密保存 auth_token、ct0'}
+            onClick={() => setShowSessionPanel((visible) => !visible)}
+            disabled={sessionBusy}
+          >
+            {sessionBusy ? <LoaderCircle className="spin" size={17} /> : <ShieldCheck size={17} />}
+            <span>{sessionConfigured ? 'X 已登录' : '登录 X'}</span>
+          </button>
           <div className="service-state"><span /> 本地服务在线</div>
         </div>
       </header>
 
       <main id="top">
-        <section className="hero" aria-label="多平台媒体下载">
-          <div className="platform-scene" aria-hidden="true">
-            <div className="platform-orbit orbit-one" />
-            <div className="platform-orbit orbit-two" />
-            <div className="platform-core"><ArrowDownToLine size={34} /></div>
-            <div className="platform-chip platform-instagram"><Instagram size={22} /><span>Instagram</span></div>
-            <div className="platform-chip platform-youtube"><Youtube size={23} /><span>YouTube</span></div>
-            <div className="platform-chip platform-x"><b>𝕏</b></div>
-            <div className="platform-chip platform-tiktok"><Music2 size={21} /><span>TikTok</span></div>
-            <div className="platform-chip platform-facebook"><Facebook size={21} /><span>Facebook</span></div>
-            <div className="platform-chip platform-twitch"><Twitch size={21} /><span>Twitch</span></div>
-          </div>
-        </section>
-
         <section className="ingest-panel">
           <div className="panel-heading">
-            <div><span><Link2 size={17} /></span><div><h2>添加帖子链接</h2><small>每行一个，最多 200 条</small></div></div>
+            <div><span><Link2 size={26} /></span><div><h2>添加链接</h2><small>支持单条或批量导入 X 帖子链接</small></div></div>
             <div className="privacy-chip"><ShieldCheck size={13} /> {xLoginSupported && sessionConfigured ? '已启用账号访问' : '默认仅公开内容'}</div>
           </div>
           <div className="composer">
             <textarea
               value={input}
               onChange={(event) => setInput(event.target.value)}
-              placeholder={'在这里粘贴 X 帖子链接…\nhttps://x.com/user/status/123456789'}
+              placeholder="粘贴 X 帖子链接"
               aria-label="X 帖子链接"
             />
             <div
@@ -431,12 +442,12 @@ export default function App() {
           </div>
         </section>
 
-        {xLoginSupported && showSessionPanel && (
+        {showSessionPanel && (
           <section className="auth-session-panel" aria-label="X 登录设置">
             <span className="auth-session-icon"><ShieldCheck size={21} /></span>
             <div className="auth-session-copy">
               <strong>{sessionConfigured ? 'X 登录已安全保存' : '下载当前账号可见的受保护帖子'}</strong>
-              <small>登录在隔离 WebView 中完成；应用只读取 auth_token 和 ct0，用 Android Keystore 加密后立即清除临时 Cookie 与网页存储。</small>
+              <small>{xLoginSupported ? '登录在隔离 WebView 中完成；应用只读取 auth_token 和 ct0，用 Android Keystore 加密后立即清除临时 Cookie 与网页存储。' : '此入口会在 Android 应用中打开隔离登录页，并加密保存 auth_token 和 ct0；浏览器预览不保存任何 Cookie。'}</small>
             </div>
             <div className="auth-session-actions">
               {sessionConfigured ? (
@@ -452,23 +463,31 @@ export default function App() {
         )}
 
         <section className="quick-stats" aria-label="下载统计">
-          <div><span>今日完成</span><strong>{String(completedToday).padStart(2, '0')}</strong><i className="violet" /></div>
-          <div><span>正在处理</span><strong>{String(activeJobs.length).padStart(2, '0')}</strong><i className="orange" /></div>
-          <div><span>全部存档</span><strong>{String(completedTotal).padStart(2, '0')}</strong><i className="green" /></div>
+          <div className="active-stat"><span className="stat-icon"><ArrowDownToLine size={29} /></span><div><span>正在下载</span><strong>{String(activeJobs.length).padStart(2, '0')}</strong></div></div>
+          <div className="complete-stat"><span className="stat-icon"><Check size={31} /></span><div><span>今日完成</span><strong>{String(completedToday).padStart(2, '0')}</strong></div></div>
         </section>
 
         <section className="workspace">
           <div className="workspace-head">
-            <div className="workspace-title"><span>下载管理</span><h2>{tab === 'queue' ? '当前任务' : '历史记录'}</h2></div>
-            {tab === 'history' && historyJobs.length > 0 && <button className="clear-button" onClick={() => void clear()}><Trash2 size={15} />清除</button>}
+            <div className="workspace-title"><span>下载管理</span><h2>{tab === 'queue' ? '正在下载' : '历史记录'}</h2></div>
+            {tab === 'history' && historyTotal > 0 && <button className="clear-button" onClick={() => void clear()}><Trash2 size={15} />清除</button>}
           </div>
           <div className="tabs" role="tablist" aria-label="下载任务筛选">
               <button role="tab" aria-selected={tab === 'queue'} className={tab === 'queue' ? 'selected' : ''} onClick={() => setTab('queue')}><Archive size={17} />进行中 <span>{activeJobs.length}</span></button>
-              <button role="tab" aria-selected={tab === 'history'} className={tab === 'history' ? 'selected' : ''} onClick={() => setTab('history')}><History size={17} />已完成 <span>{historyJobs.length}</span></button>
+              <button role="tab" aria-selected={tab === 'history'} className={tab === 'history' ? 'selected' : ''} onClick={() => setTab('history')}><History size={17} />已完成 <span>{historyTotal}</span></button>
             </div>
 
           {visibleJobs.length ? (
-            <div className="job-list">{visibleJobs.map((job) => <JobCard key={job.id} job={job} onAction={action} />)}</div>
+            <>
+              <div className="job-list">{visibleJobs.map((job) => <JobCard key={job.id} job={job} onAction={action} />)}</div>
+              {tab === 'history' && historyTotal > HISTORY_PAGE_SIZE && (
+                <nav className="history-pagination" aria-label="下载历史分页">
+                  <button onClick={() => showHistoryPage(historyPage - 1)} disabled={historyPage === 0}>上一页</button>
+                  <span>第 {historyPage + 1} / {Math.ceil(historyTotal / HISTORY_PAGE_SIZE)} 页</span>
+                  <button onClick={() => showHistoryPage(historyPage + 1)} disabled={(historyPage + 1) * HISTORY_PAGE_SIZE >= historyTotal}>下一页</button>
+                </nav>
+              )}
+            </>
           ) : (
             <div className="empty-state">
               <span>{tab === 'queue' ? <Pause size={25} /> : <History size={25} />}</span>
@@ -489,13 +508,19 @@ export default function App() {
       <footer className="page-footer"><span>媒体由本地服务解析与保存</span><span>{xLoginSupported && sessionConfigured ? 'X 会话经 Android Keystore 加密' : '公开帖子无需登录'}</span></footer>
       <nav className="mobile-nav" aria-label="主导航">
         <button className={tab === 'queue' ? 'selected' : ''} onClick={() => jumpToTab('queue')} aria-current={tab === 'queue' ? 'page' : undefined}>
-          <Archive size={20} /><span>进行中</span>{activeJobs.length > 0 && <b>{activeJobs.length}</b>}
+          <Home size={21} /><span>首页</span>
+        </button>
+        <button onClick={() => jumpToTab('queue')}>
+          <List size={21} /><span>正在下载</span>{activeJobs.length > 0 && <b>{activeJobs.length}</b>}
         </button>
         <button className="mobile-add" onClick={openComposer} aria-label="添加下载链接">
           <span><Link2 size={21} /></span><small>新建</small>
         </button>
+        <button onClick={() => jumpToTab('history')}>
+          <FolderOpen size={21} /><span>媒体库</span>
+        </button>
         <button className={tab === 'history' ? 'selected' : ''} onClick={() => jumpToTab('history')} aria-current={tab === 'history' ? 'page' : undefined}>
-          <History size={20} /><span>已完成</span>{historyJobs.length > 0 && <b>{historyJobs.length}</b>}
+          <History size={20} /><span>已完成</span>{historyTotal > 0 && <b>{historyTotal}</b>}
         </button>
       </nav>
       {notice && <div className="toast" role="status"><CircleAlert size={17} />{notice}<button onClick={() => setNotice('')} aria-label="关闭提示"><X size={15} /></button></div>}

@@ -2,7 +2,7 @@ import { registerPlugin, type PluginListenerHandle } from '@capacitor/core';
 import type { DownloadJob } from './types';
 
 export interface LocalArchivePlugin {
-  listJobs(): Promise<{ jobs: DownloadJob[] }>;
+  listJobs(input?: { historyOffset?: number; historyLimit?: number }): Promise<{ jobs: DownloadJob[]; historyTotal: number }>;
   createJobs(input: { urls: string[] }): Promise<{
     created: DownloadJob[];
     duplicates: DownloadJob[];
@@ -21,7 +21,7 @@ export interface LocalArchivePlugin {
   selectDownloadFolder(): Promise<{ selected: boolean; uri?: string }>;
   getDownloadFolder(): Promise<{ selected: boolean }>;
   shareMedia(input: { id: string }): Promise<void>;
-  addListener(eventName: 'jobsChanged', listenerFunc: (event: { jobs: DownloadJob[] }) => void): Promise<PluginListenerHandle>;
+  addListener(eventName: 'jobsChanged', listenerFunc: () => void): Promise<PluginListenerHandle>;
   addListener(eventName: 'sharedContent', listenerFunc: (event: { text: string }) => void): Promise<PluginListenerHandle>;
 }
 

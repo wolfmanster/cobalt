@@ -15,9 +15,18 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
   return data as T;
 }
 
-export function listJobs() {
-  if (native) return LocalArchive.listJobs().then((result) => result.jobs);
-  return request<DownloadJob[]>('/api/jobs');
+export interface JobList {
+  jobs: DownloadJob[];
+  historyTotal: number;
+}
+
+export function listJobs(options: { historyOffset?: number; historyLimit?: number } = {}) {
+  if (native) return LocalArchive.listJobs(options);
+  const query = new URLSearchParams();
+  if (options.historyOffset !== undefined) query.set('historyOffset', String(options.historyOffset));
+  if (options.historyLimit !== undefined) query.set('historyLimit', String(options.historyLimit));
+  const suffix = query.size ? `?${query}` : '';
+  return request<JobList>(`/api/jobs${suffix}`);
 }
 
 export function createJobs(urls: string[]) {
@@ -95,10 +104,10 @@ export function shareMedia(id: string) {
   return Promise.resolve();
 }
 
-export function subscribeJobs(onJobs: (jobs: DownloadJob[]) => void) {
+export function subscribeJobs(onChange: () => void) {
   if (native) {
     let handle: { remove: () => Promise<void> } | undefined;
-    const ready = LocalArchive.addListener('jobsChanged', (event) => onJobs(event.jobs)).then((value) => {
+    const ready = LocalArchive.addListener('jobsChanged', onChange).then((value) => {
       handle = value;
       return value;
     });
@@ -110,7 +119,7 @@ export function subscribeJobs(onJobs: (jobs: DownloadJob[]) => void) {
     };
   }
   const events = new EventSource('/api/events');
-  events.onmessage = (event) => onJobs(JSON.parse(event.data) as DownloadJob[]);
+  events.onmessage = () => onChange();
   return { close: async () => events.close() };
 }
 

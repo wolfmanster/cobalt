@@ -47,7 +47,17 @@ app.get('/api/health', async (_req, res) => {
   res.status(cobalt ? 200 : 503).json({ ok: true, cobalt, cobaltUrl });
 });
 
-app.get('/api/jobs', (_req, res) => res.json(store.list().map(publicJob)));
+app.get('/api/jobs', (req, res) => {
+  const historyOffset = Math.max(0, Number.parseInt(String(req.query.historyOffset ?? '0'), 10) || 0);
+  const historyLimit = Math.min(50, Math.max(1, Number.parseInt(String(req.query.historyLimit ?? '25'), 10) || 25));
+  const jobs = store.list();
+  const active = jobs.filter((job) => !['completed', 'failed', 'canceled'].includes(job.status));
+  const history = jobs.filter((job) => ['completed', 'failed', 'canceled'].includes(job.status));
+  res.json({
+    jobs: [...active, ...history.slice(historyOffset, historyOffset + historyLimit)].map(publicJob),
+    historyTotal: history.length,
+  });
+});
 
 app.post('/api/jobs', (req, res) => {
   const result = z.object({ urls: z.array(z.string()).min(1).max(200) }).safeParse(req.body);
@@ -146,9 +156,9 @@ app.get('/api/events', (req, res) => {
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
-  const send = (jobs = store.list()) => res.write(`data: ${JSON.stringify(jobs.map(publicJob))}\n\n`);
+  const send = () => res.write('data: {"updated":true}\n\n');
   send();
-  const listener = (jobs: DownloadJob[]) => send(jobs);
+  const listener = () => send();
   queue.on('change', listener);
   const heartbeat = setInterval(() => res.write(': heartbeat\n\n'), 20_000);
   req.on('close', () => {

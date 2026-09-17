@@ -15,6 +15,15 @@ interface ArchiveDao {
     @Query("SELECT * FROM jobs ORDER BY createdAt DESC")
     suspend fun listJobs(): List<JobEntity>
 
+    @Query("SELECT * FROM jobs WHERE status NOT IN ('completed', 'failed', 'canceled') ORDER BY createdAt DESC")
+    suspend fun listActiveJobs(): List<JobEntity>
+
+    @Query("SELECT * FROM jobs WHERE status IN ('completed', 'failed', 'canceled') ORDER BY createdAt DESC LIMIT :limit OFFSET :offset")
+    suspend fun listHistoryJobs(offset: Int, limit: Int): List<JobEntity>
+
+    @Query("SELECT COUNT(*) FROM jobs WHERE status IN ('completed', 'failed', 'canceled')")
+    suspend fun historyCount(): Int
+
     @Query("SELECT * FROM jobs WHERE id = :id")
     suspend fun getJob(id: String): JobEntity?
 

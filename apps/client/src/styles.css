@@ -842,3 +842,21 @@ main { width: min(1120px, calc(100% - 56px)); margin: 0 auto; }
   .job-card.is-history-post .post-text,
   .job-card.is-history-post .media-grid { margin-left: 52px; }
 }
+
+/* Android uses three independent screens; the browser keeps its existing page layout. */
+.native-main { width: 100%; margin: 0; }
+.native-pages { width: 100%; }
+.native-page { display: none; }
+.native-page.is-current { display: block; }
+.native-page .workspace { max-width: 860px; }
+.native-search-page { padding: 16px 22px 40px; }
+.is-native .page-footer { display: none; }
+
+@media (max-width: 760px) {
+  .native-main { padding-bottom: 16px; }
+  .native-page .workspace { margin: 34px 18px 28px; }
+  .native-page .workspace-head { align-items: center; }
+  .native-page .workspace-title h2 { font-size: 24px; }
+  .native-search-page { padding: 4px 18px 32px; }
+  .native-history-workspace .archive-view-tabs { margin-top: 18px; }
+}

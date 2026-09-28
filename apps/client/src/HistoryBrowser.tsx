@@ -52,13 +52,17 @@ function formatRecent(value: string) {
   return Number.isNaN(date.getTime()) ? '时间未知' : RECENT_DATE_FORMATTER.format(date);
 }
 
-export function HistoryBrowser({ mode, revision, renderJob, onError }: {
+export function HistoryBrowser({ mode, revision, renderJob, onError, searchQuery, onSearchQueryChange, onDetailBackChange, active = true }: {
   mode: 'authors' | 'search';
   revision: number;
   renderJob: (job: DownloadJob) => ReactNode;
   onError: (message: string) => void;
+  searchQuery?: string;
+  onSearchQueryChange?: (query: string) => void;
+  onDetailBackChange?: (handler: (() => boolean) | null) => void;
+  active?: boolean;
 }) {
-  const [query, setQuery] = useState('');
+  const [localQuery, setLocalQuery] = useState('');
   const [postPage, setPostPage] = useState(0);
   const [authorPage, setAuthorPage] = useState(0);
   const [detailPage, setDetailPage] = useState(0);
@@ -68,10 +72,16 @@ export function HistoryBrowser({ mode, revision, renderJob, onError }: {
   const [detail, setDetail] = useState<DownloadedAuthor | null>(null);
   const detailScroll = useRef<HTMLDivElement>(null);
   const searchInput = useRef<HTMLInputElement>(null);
+  const query = mode === 'search' ? (searchQuery ?? localQuery) : localQuery;
   const debouncedQuery = useDebouncedValue(query);
   const searching = mode === 'search' && Boolean(query.trim());
 
-  useEffect(() => { if (mode === 'search') searchInput.current?.focus(); }, [mode]);
+  const updateQuery = (value: string) => {
+    setLocalQuery(value);
+    onSearchQueryChange?.(value);
+  };
+
+  useEffect(() => { if (mode === 'search' && active) searchInput.current?.focus(); }, [mode, active]);
 
   useEffect(() => {
     if (mode !== 'search') return;
@@ -120,11 +130,10 @@ export function HistoryBrowser({ mode, revision, renderJob, onError }: {
   }, [detail, detailPage, revision, onError]);
 
   useEffect(() => {
-    if (!detail) return;
-    const browserWindow = window as Window & { __cobaltGoBack?: () => boolean };
-    browserWindow.__cobaltGoBack = () => { setDetail(null); return true; };
-    return () => { delete browserWindow.__cobaltGoBack; };
-  }, [detail]);
+    const handler = detail ? () => { setDetail(null); return true; } : null;
+    onDetailBackChange?.(handler);
+    return () => onDetailBackChange?.(null);
+  }, [detail, onDetailBackChange]);
 
   function openAuthor(author: DownloadedAuthor) {
     setDetail(author);
@@ -135,7 +144,7 @@ export function HistoryBrowser({ mode, revision, renderJob, onError }: {
   return <>
     <div className="archive-browser">
       {mode === 'search' && <>
-        <SearchBox value={query} inputRef={searchInput} onChange={(value) => { setQuery(value); setAuthorPage(0); setPostPage(0); }} />
+        <SearchBox value={query} inputRef={searchInput} onChange={(value) => { updateQuery(value); setAuthorPage(0); setPostPage(0); }} />
         {!searching && <div className="archive-empty">输入作者名称、@用户名或推文正文开始搜索</div>}
       </>}
       {searching && <section className="archive-result-section" aria-label="推文内容结果">

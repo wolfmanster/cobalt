@@ -1,9 +1,13 @@
 package com.xmedia.archive.plugin
 
 import android.content.ClipboardManager
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Environment
+import android.os.StrictMode
+import android.provider.DocumentsContract
 import androidx.activity.result.ActivityResult
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
@@ -23,6 +27,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 
 @CapacitorPlugin(name = "LocalArchive")
 class LocalArchivePlugin : Plugin() {
@@ -75,10 +80,6 @@ class LocalArchivePlugin : Plugin() {
         val urls = call.getArray("urls")?.let { array -> (0 until array.length()).mapNotNull { array.optString(it).takeIf(String::isNotBlank) } }
         if (urls.isNullOrEmpty() || urls.size > 200) {
             call.reject("请提供 1–200 条帖子链接")
-            return
-        }
-        if (!DownloadDestination.hasSelectedFolder(context)) {
-            call.reject("请先选择下载文件夹")
             return
         }
         scope.launch {
@@ -156,7 +157,97 @@ class LocalArchivePlugin : Plugin() {
     }
 
     @PluginMethod
-    fun openMedia(call: PluginCall) = launchMediaIntent(call, Intent.ACTION_VIEW)
+    fun openMedia(call: PluginCall) {
+        val id = call.getString("id")
+        if (id.isNullOrBlank()) {
+            call.reject("缺少媒体 ID")
+            return
+        }
+        scope.launch {
+            val media = repository.mediaUri(id)
+            if (media == null) {
+                call.reject("媒体文件不存在")
+                return@launch
+            }
+            val mediaUri = Uri.parse(media.first)
+            val miuiIntent = miuiFileExplorerIntent(mediaUri)
+            val intent = when {
+                miuiIntent != null -> miuiIntent
+                else -> Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(mediaUri, media.second)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+            }
+            runCatching {
+                if (miuiIntent != null) {
+                    startMiuiFileExplorer(intent)
+                } else {
+                    context.startActivity(intent)
+                }
+            }.onSuccess {
+                call.resolve()
+            }.onFailure { error ->
+                call.reject(error.message ?: "无法打开文件位置")
+            }
+        }
+    }
+
+    @PluginMethod
+    fun listDownloadedPosts(call: PluginCall) {
+        val offset = (call.getInt("offset") ?: 0).coerceAtLeast(0)
+        val limit = (call.getInt("limit") ?: 25).coerceIn(1, 25)
+        val query = call.getString("query").orEmpty()
+        val authorKey = call.getString("authorKey")?.takeIf(String::isNotBlank)
+        scope.launch {
+            try {
+                call.resolve(JSObject(repository.downloadedPostsJson(authorKey, query, offset, limit).toString()))
+            } catch (error: Exception) {
+                call.reject(error.message ?: "无法读取已下载推文")
+            }
+        }
+    }
+
+    @PluginMethod
+    fun listAuthors(call: PluginCall) {
+        val offset = (call.getInt("offset") ?: 0).coerceAtLeast(0)
+        val limit = (call.getInt("limit") ?: 25).coerceIn(1, 25)
+        scope.launch {
+            try {
+                call.resolve(JSObject(repository.authorsJson(call.getString("query").orEmpty(), offset, limit).toString()))
+            } catch (error: Exception) {
+                call.reject(error.message ?: "无法读取作者列表")
+            }
+        }
+    }
+
+    private fun miuiFileExplorerIntent(mediaUri: Uri): Intent? {
+        val installed = runCatching {
+            context.packageManager.getPackageInfo("com.android.fileexplorer", 0)
+        }.isSuccess
+        if (!installed || mediaUri.authority != "com.android.externalstorage.documents") return null
+
+        val documentId = runCatching { DocumentsContract.getDocumentId(mediaUri) }.getOrNull() ?: return null
+        val separator = documentId.indexOf(':')
+        if (separator < 1 || documentId.substring(0, separator) != "primary") return null
+
+        val relativePath = documentId.substring(separator + 1)
+        val parent = File(Environment.getExternalStorageDirectory(), relativePath).parentFile ?: return null
+        return Intent(Intent.ACTION_VIEW, Uri.fromFile(parent)).apply {
+            component = ComponentName("com.android.fileexplorer", "com.android.fileexplorer.FileExplorerTabActivity")
+        }
+    }
+
+    private fun startMiuiFileExplorer(intent: Intent) {
+        val originalPolicy = StrictMode.getVmPolicy()
+        try {
+            // Xiaomi File Explorer needs file:// for folder navigation. Suppress URI exposure
+            // checks only while starting this explicit system component.
+            StrictMode.setVmPolicy(StrictMode.VmPolicy.Builder().build())
+            context.startActivity(intent)
+        } finally {
+            StrictMode.setVmPolicy(originalPolicy)
+        }
+    }
 
     @PluginMethod
     fun selectDownloadFolder(call: PluginCall) {
@@ -170,7 +261,18 @@ class LocalArchivePlugin : Plugin() {
 
     @PluginMethod
     fun getDownloadFolder(call: PluginCall) {
-        call.resolve(JSObject().put("selected", DownloadDestination.hasSelectedFolder(context)))
+        val selection = DownloadDestination.selection(context)
+        call.resolve(JSObject().put("selected", selection.selected).put("mode", selection.mode).put("label", selection.label))
+    }
+
+    @PluginMethod
+    fun setDownloadPath(call: PluginCall) {
+        val path = call.getString("path") ?: ""
+        runCatching { DownloadDestination.saveDownloadPath(context, path) }
+            .onSuccess { selection ->
+                call.resolve(JSObject().put("selected", selection.selected).put("mode", selection.mode).put("label", selection.label))
+            }
+            .onFailure { error -> call.reject(error.message ?: "无法设置下载位置") }
     }
 
     @ActivityCallback
@@ -183,48 +285,17 @@ class LocalArchivePlugin : Plugin() {
         }
         val flags = result.data?.flags?.and(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
             ?: (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+        if (flags != (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)) {
+            call.reject("所选文件夹未授予读写权限")
+            return
+        }
         runCatching {
             context.contentResolver.takePersistableUriPermission(uri, flags)
             DownloadDestination.saveTreeUri(context, uri)
-        }.onSuccess {
-            call.resolve(JSObject().put("selected", true).put("uri", uri.toString()))
+        }.onSuccess { selection ->
+            call.resolve(JSObject().put("selected", selection.selected).put("mode", selection.mode).put("label", selection.label))
         }.onFailure { error ->
             call.reject(error.message ?: "无法保存下载文件夹权限")
-        }
-    }
-
-    @PluginMethod
-    fun shareMedia(call: PluginCall) = launchMediaIntent(call, Intent.ACTION_SEND)
-
-    private fun launchMediaIntent(call: PluginCall, action: String) {
-        val id = call.getString("id")
-        if (id.isNullOrBlank()) {
-            call.reject("缺少媒体 ID")
-            return
-        }
-        scope.launch {
-            val media = repository.mediaUri(id)
-            if (media == null) {
-                call.reject("媒体文件不存在")
-                return@launch
-            }
-            val intent = Intent(action).apply {
-                if (action == Intent.ACTION_VIEW) {
-                    setDataAndType(Uri.parse(media.first), media.second)
-                } else {
-                    type = media.second
-                    putExtra(Intent.EXTRA_STREAM, Uri.parse(media.first))
-                }
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            }
-            val launchIntent = if (action == Intent.ACTION_SEND) Intent.createChooser(intent, "分享媒体") else intent
-            runCatching {
-                context.startActivity(launchIntent)
-            }.onSuccess {
-                call.resolve()
-            }.onFailure { error ->
-                call.reject(error.message ?: "无法打开媒体文件")
-            }
         }
     }
 

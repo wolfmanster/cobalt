@@ -1,8 +1,25 @@
 import { registerPlugin, type PluginListenerHandle } from '@capacitor/core';
 import type { DownloadJob } from './types';
 
+export interface DownloadedAuthor {
+  authorKey: string;
+  authorName: string;
+  username: string;
+  avatarUrl: string;
+  tweetCount: number;
+  latestDownloadedAt: string;
+}
+
+export interface DownloadFolder {
+  selected: boolean;
+  mode?: 'downloads' | 'folder';
+  label?: string;
+}
+
 export interface LocalArchivePlugin {
   listJobs(input?: { historyOffset?: number; historyLimit?: number }): Promise<{ jobs: DownloadJob[]; historyTotal: number; completedToday: number }>;
+  listDownloadedPosts(input: { authorKey?: string; query: string; offset: number; limit: number }): Promise<{ jobs: DownloadJob[]; total: number }>;
+  listAuthors(input: { query: string; offset: number; limit: number }): Promise<{ authors: DownloadedAuthor[]; total: number }>;
   createJobs(input: { urls: string[] }): Promise<{
     created: DownloadJob[];
     duplicates: DownloadJob[];
@@ -18,9 +35,9 @@ export interface LocalArchivePlugin {
   consumeSharedContent(): Promise<{ text: string }>;
   readClipboard(): Promise<{ text: string }>;
   openMedia(input: { id: string }): Promise<void>;
-  selectDownloadFolder(): Promise<{ selected: boolean; uri?: string }>;
-  getDownloadFolder(): Promise<{ selected: boolean }>;
-  shareMedia(input: { id: string }): Promise<void>;
+  selectDownloadFolder(): Promise<DownloadFolder>;
+  setDownloadPath(input: { path: string }): Promise<DownloadFolder>;
+  getDownloadFolder(): Promise<DownloadFolder>;
   addListener(eventName: 'jobsChanged', listenerFunc: () => void): Promise<PluginListenerHandle>;
   addListener(eventName: 'sharedContent', listenerFunc: (event: { text: string }) => void): Promise<PluginListenerHandle>;
 }

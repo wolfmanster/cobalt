@@ -1,4 +1,7 @@
-# cobalt web
+# cobalt web (deprecated)
+
+> **Deprecated in this project.** The standalone browser frontend is retained for reference and receives no new feature development. Future product development targets the Android app. Its UI is maintained in `apps/client` and packaged through `Android/project`.
+
 the cobalt frontend is a static web app built with
 [sveltekit](https://kit.svelte.dev/) + [vite](https://vitejs.dev/).
 

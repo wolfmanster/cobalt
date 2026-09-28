@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createJobRefresh } from './jobRefresh';
+import { HistoryBrowser } from './HistoryBrowser';
 import { Capacitor } from '@capacitor/core';
 import {
   Archive,
@@ -17,13 +18,14 @@ import {
   LoaderCircle,
   Pause,
   RotateCcw,
+  Search,
   ShieldCheck,
   Trash2,
   Upload,
   Video,
   X,
 } from 'lucide-react';
-import { cancelJob, clearHistory, clearXSession, consumeSharedContent, createJobs, getDownloadFolder, getHealth, getXSessionStatus, listJobs, openMedia, readClipboardText, retryJob, selectDownloadFolder, startXLogin, subscribeJobs, subscribeSharedContent, xLoginSupported } from './api';
+import { cancelJob, clearHistory, clearXSession, consumeSharedContent, createJobs, getDownloadFolder, getHealth, getXSessionStatus, listJobs, openMedia, readClipboardText, retryJob, selectDownloadFolder, setDownloadPath, startXLogin, subscribeJobs, subscribeSharedContent, xLoginSupported } from './api';
 import type { DownloadJob, JobStatus, MediaItem } from './types';
 
 const HISTORY_PAGE_SIZE = 25;
@@ -86,18 +88,21 @@ function MediaPreview({ media }: { media: MediaItem }) {
   );
 }
 
-function JobCard({ job, onAction, onOpenMedia }: { job: DownloadJob; onAction: (action: 'cancel' | 'retry', id: string) => void; onOpenMedia: (id: string) => void }) {
+function JobCard({ job, onAction, onOpenMedia, presentation = 'queue' }: { job: DownloadJob; onAction: (action: 'cancel' | 'retry', id: string) => void; onOpenMedia: (id: string) => void; presentation?: 'queue' | 'history' }) {
+  const [avatarFailed, setAvatarFailed] = useState(false);
+  useEffect(() => setAvatarFailed(false), [job.metadata?.avatarUrl]);
   const active = ['queued', 'resolving', 'downloading'].includes(job.status);
   const complete = job.status === 'completed';
+  const historical = presentation === 'history';
   const totalSize = job.media.reduce((sum, item) => sum + (item.size ?? 0), 0);
 
   return (
-    <article className={`job-card ${active ? 'is-active' : ''}`}>
+    <article className={`job-card ${active ? 'is-active' : ''} ${historical ? 'is-history-post' : ''}`}>
       <div className="job-main">
         <div className="author-row">
           <div className="avatar-wrap">
-            {job.metadata?.avatarUrl ? (
-              <img className="avatar" src={job.metadata.avatarUrl} alt="" />
+            {job.metadata?.avatarUrl && !avatarFailed ? (
+              <img className="avatar" src={job.metadata.avatarUrl} alt="" loading="lazy" onError={() => setAvatarFailed(true)} />
             ) : (
               <div className="avatar placeholder-avatar"><span>𝕏</span></div>
             )}
@@ -109,9 +114,9 @@ function JobCard({ job, onAction, onOpenMedia }: { job: DownloadJob; onAction: (
               {job.metadata && <span>@{job.metadata.username}</span>}
             </div>
             <div className="post-meta">
-              <span>ID {job.tweetId}</span>
-              {job.metadata?.language && <span>{job.metadata.language.toUpperCase()}</span>}
-              <span>{formatDate(job.metadata?.publishedAt ?? job.createdAt)}</span>
+              {!historical && <span>推文 ID {job.tweetId}</span>}
+              {!historical && job.metadata?.language && <span>{job.metadata.language.toUpperCase()}</span>}
+              <span className="post-date">{formatDate(job.metadata?.publishedAt ?? job.createdAt)}</span>
             </div>
           </div>
           <span className={`status ${STATUS[job.status].className}`}>
@@ -148,7 +153,7 @@ function JobCard({ job, onAction, onOpenMedia }: { job: DownloadJob; onAction: (
       </div>
 
       <footer className="job-footer">
-        <span>{job.media.length ? `${job.media.length} 个媒体 · ${formatBytes(totalSize || undefined)}` : `第 ${job.attempts || 1} 次尝试`}</span>
+        {!historical && <span>{job.media.length ? `${job.media.length} 个媒体 · ${formatBytes(totalSize || undefined)}` : `第 ${job.attempts || 1} 次尝试`}</span>}
         <div className="job-actions">
           {active && <button className="text-button danger-text" onClick={() => onAction('cancel', job.id)}><X size={15} />取消</button>}
           {(job.status === 'failed' || job.status === 'canceled') && <button className="text-button" onClick={() => onAction('retry', job.id)}><RotateCcw size={14} />重试</button>}
@@ -165,7 +170,9 @@ export default function App() {
   const [completedToday, setCompletedToday] = useState(0);
   const [historyPage, setHistoryPage] = useState(0);
   const [input, setInput] = useState('');
-  const [tab, setTab] = useState<'queue' | 'history'>('queue');
+  const [tab, setTab] = useState<'queue' | 'history' | 'search'>('queue');
+  const [historyView, setHistoryView] = useState<'all' | 'authors'>('all');
+  const [archiveRevision, setArchiveRevision] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [notice, setNotice] = useState('');
@@ -173,6 +180,9 @@ export default function App() {
   const [clearing, setClearing] = useState(false);
   const [clearConfirmationOpen, setClearConfirmationOpen] = useState(false);
   const [folderReady, setFolderReady] = useState(false);
+  const [folderLabel, setFolderLabel] = useState('Download/X Media Archive');
+  const [folderDialogOpen, setFolderDialogOpen] = useState(false);
+  const [downloadSubfolder, setDownloadSubfolder] = useState('X Media Archive');
   const [serviceHealthy, setServiceHealthy] = useState<boolean | null>(null);
   const [sessionConfigured, setSessionConfigured] = useState(false);
   const [showSessionPanel, setShowSessionPanel] = useState(false);
@@ -180,9 +190,14 @@ export default function App() {
   const fileRef = useRef<HTMLInputElement>(null);
   const handledSharedLinks = useRef(new Set<string>());
   const historyPageRef = useRef(0);
+  const previousHistoryTotal = useRef<number | null>(null);
   const urls = useMemo(() => extractUrls(input), [input]);
 
   const loadJobs = useMemo(() => createJobRefresh(listJobs, HISTORY_PAGE_SIZE, (result, page) => {
+    if (xLoginSupported && previousHistoryTotal.current !== null && previousHistoryTotal.current !== result.historyTotal) {
+      setArchiveRevision((current) => current + 1);
+    }
+    previousHistoryTotal.current = result.historyTotal;
     setJobs(result.jobs);
     setHistoryTotal(result.historyTotal);
     setCompletedToday(result.completedToday);
@@ -196,12 +211,9 @@ export default function App() {
     setSubmitting(true);
     try {
       if (!(await getDownloadFolder()).selected) {
-        const selected = await selectDownloadFolder();
-        if (!selected.selected) {
-          setNotice('请选择下载文件夹后再加入队列');
-          return;
-        }
-        setFolderReady(true);
+        setFolderDialogOpen(true);
+        setNotice('请先重新设置下载位置');
+        return;
       }
       const result = await createJobs(requestedUrls);
       setInput('');
@@ -229,7 +241,13 @@ export default function App() {
 
   useEffect(() => {
     void refreshJobs().catch((error) => setNotice(error.message));
-    void getDownloadFolder().then((result) => setFolderReady(result.selected)).catch(() => undefined);
+    void getDownloadFolder().then((result) => {
+      setFolderReady(result.selected);
+      if (result.label) {
+        setFolderLabel(result.label);
+        if (result.mode === 'downloads') setDownloadSubfolder(result.label.replace(/^Download\/?/, ''));
+      }
+    }).catch(() => undefined);
     if (xLoginSupported) {
       void getXSessionStatus().then((result) => setSessionConfigured(result.configured)).catch(() => undefined);
     }
@@ -326,7 +344,9 @@ export default function App() {
       const result = await selectDownloadFolder();
       if (result.selected) {
         setFolderReady(true);
-        setNotice('已保存下载文件夹；新任务将写入该文件夹');
+        if (result.label) setFolderLabel(result.label);
+        setFolderDialogOpen(false);
+        setNotice(`下载位置已设置为 ${result.label ?? '所选文件夹'}`);
       }
     } catch (error) {
       setNotice(error instanceof Error ? error.message : '无法选择下载文件夹');
@@ -384,9 +404,24 @@ export default function App() {
     }
   }
 
-  function jumpToTab(nextTab: 'queue' | 'history') {
+  function jumpToTab(nextTab: 'queue' | 'history' | 'search') {
     setTab(nextTab);
     document.querySelector('.workspace')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  async function saveDownloadSubfolder() {
+    setChoosingFolder(true);
+    try {
+      const result = await setDownloadPath(downloadSubfolder);
+      setFolderReady(result.selected);
+      setFolderLabel(result.label ?? 'Download');
+      setFolderDialogOpen(false);
+      setNotice(`下载位置已设置为 ${result.label ?? 'Download'}`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '无法设置下载位置');
+    } finally {
+      setChoosingFolder(false);
+    }
   }
 
   function jumpHome() {
@@ -408,12 +443,12 @@ export default function App() {
           <button
             className={`folder-button ${folderReady ? 'is-ready' : ''}`}
             type="button"
-            title="选择或更改下载文件夹"
-            onClick={() => void chooseDownloadFolder()}
+            title={`下载位置：${folderLabel}，点击更改`}
+            onClick={() => xLoginSupported ? setFolderDialogOpen(true) : void chooseDownloadFolder()}
             disabled={choosingFolder}
           >
             {choosingFolder ? <LoaderCircle className="spin" size={17} /> : folderReady ? <FolderCheck size={17} /> : <FolderOpen size={17} />}
-            <span>{folderReady ? '文件夹已设置' : '选择下载文件夹'}</span>
+            <span>{xLoginSupported ? '下载位置' : folderReady ? '文件夹已设置' : '选择下载文件夹'}</span>
           </button>
           <button
             className={`session-button ${sessionConfigured ? 'is-ready' : ''}`}
@@ -493,17 +528,27 @@ export default function App() {
 
         <section className="workspace">
           <div className="workspace-head">
-            <div className="workspace-title"><span>下载管理</span><h2>{tab === 'queue' ? '正在下载' : '历史记录'}</h2></div>
+            <div className="workspace-title"><span>下载管理</span><h2>{tab === 'queue' ? '正在下载' : tab === 'search' ? '搜索' : '历史记录'}</h2></div>
             {tab === 'history' && historyTotal > 0 && <button className="clear-button" type="button" onClick={requestClearHistory} disabled={clearing}>{clearing ? <LoaderCircle className="spin" size={15} /> : <Trash2 size={15} />}{clearing ? '正在清除' : '清除'}</button>}
           </div>
-          <div className="tabs" role="tablist" aria-label="下载任务筛选">
+          {tab !== 'search' && <div className="tabs" role="tablist" aria-label="下载任务筛选">
               <button role="tab" aria-selected={tab === 'queue'} className={tab === 'queue' ? 'selected' : ''} onClick={() => setTab('queue')}><Archive size={17} />进行中 <span>{activeJobs.length}</span></button>
-              <button role="tab" aria-selected={tab === 'history'} className={tab === 'history' ? 'selected' : ''} onClick={() => setTab('history')}><History size={17} />已完成 <span>{historyTotal}</span></button>
-            </div>
+              <button role="tab" aria-selected={tab === 'history'} className={tab === 'history' ? 'selected' : ''} onClick={() => setTab('history')}><History size={17} />历史 <span>{historyTotal}</span></button>
+            </div>}
 
-          {visibleJobs.length ? (
+          {tab === 'history' && xLoginSupported && <div className="archive-view-tabs" role="tablist" aria-label="历史浏览方式">
+            <button type="button" role="tab" aria-selected={historyView === 'all'} className={historyView === 'all' ? 'selected' : ''} onClick={() => setHistoryView('all')}>全部推文</button>
+            <button type="button" role="tab" aria-selected={historyView === 'authors'} className={historyView === 'authors' ? 'selected' : ''} onClick={() => setHistoryView('authors')}>作者</button>
+          </div>}
+
+          {xLoginSupported && (tab === 'search' || (tab === 'history' && historyView === 'authors')) ? <HistoryBrowser
+            mode={tab === 'search' ? 'search' : 'authors'}
+            revision={archiveRevision}
+            renderJob={(job) => <JobCard job={job} onAction={action} onOpenMedia={(id) => void openJobMedia(id)} presentation="history" />}
+            onError={setNotice}
+          /> : visibleJobs.length ? (
             <>
-              <div className="job-list">{visibleJobs.map((job) => <JobCard key={job.id} job={job} onAction={action} onOpenMedia={(id) => void openJobMedia(id)} />)}</div>
+              <div className={`job-list ${tab === 'history' ? 'history-post-list' : ''}`}>{visibleJobs.map((job) => <JobCard key={job.id} job={job} onAction={action} onOpenMedia={(id) => void openJobMedia(id)} presentation={tab === 'history' ? 'history' : 'queue'} />)}</div>
               {tab === 'history' && historyTotal > HISTORY_PAGE_SIZE && (
                 <nav className="history-pagination" aria-label="下载历史分页">
                   <button onClick={() => showHistoryPage(historyPage - 1)} disabled={historyPage === 0}>上一页</button>
@@ -530,17 +575,32 @@ export default function App() {
       </main>
 
       <footer className="page-footer"><span>媒体由本地服务解析与保存</span><span>{xLoginSupported && sessionConfigured ? 'X 会话经 Android Keystore 加密' : '公开帖子无需登录'}</span></footer>
-      <nav className="mobile-nav" aria-label="主导航">
+      <nav className={`mobile-nav ${xLoginSupported ? 'has-search' : ''}`} aria-label="主导航">
         <button className={tab === 'queue' ? 'selected' : ''} onClick={jumpHome} aria-current={tab === 'queue' ? 'page' : undefined}>
           <Home size={21} /><span>首页</span>
         </button>
         <button className="mobile-add" onClick={openComposer} aria-label="添加下载链接">
           <span><Link2 size={21} /></span><small>新建</small>
         </button>
+        {xLoginSupported && <button className={tab === 'search' ? 'selected' : ''} onClick={() => jumpToTab('search')} aria-current={tab === 'search' ? 'page' : undefined}>
+          <Search size={20} /><span>搜索</span>
+        </button>}
         <button className={tab === 'history' ? 'selected' : ''} onClick={() => jumpToTab('history')} aria-current={tab === 'history' ? 'page' : undefined}>
           <History size={20} /><span>历史</span>{historyTotal > 0 && <b>{historyTotal}</b>}
         </button>
       </nav>
+      {folderDialogOpen && <div className="confirmation-backdrop">
+        <section className="confirmation-dialog folder-dialog" role="dialog" aria-modal="true" aria-labelledby="download-folder-title">
+          <h2 id="download-folder-title">选择下载位置</h2>
+          <p>当前位置：{folderLabel}</p>
+          <label htmlFor="download-subfolder">保存到 Download 下的文件夹</label>
+          <div className="folder-path-input"><span>Download /</span><input id="download-subfolder" value={downloadSubfolder} onChange={(event) => setDownloadSubfolder(event.target.value)} placeholder="留空即保存到 Download" autoFocus /></div>
+          <p>可填写多级路径，例如 X Media Archive/收藏。系统不允许通过文件夹选择器直接授权 Download 根目录，这里可直接设置。</p>
+          <button type="button" className="folder-save" onClick={() => void saveDownloadSubfolder()} disabled={choosingFolder}>保存此位置</button>
+          <button type="button" className="folder-pick" onClick={() => void chooseDownloadFolder()} disabled={choosingFolder}>选择其他文件夹…</button>
+          <div className="confirmation-actions"><button type="button" className="confirmation-cancel" onClick={() => setFolderDialogOpen(false)} disabled={choosingFolder}>取消</button></div>
+        </section>
+      </div>}
       {clearConfirmationOpen && <div className="confirmation-backdrop">
         <section className="confirmation-dialog" role="alertdialog" aria-modal="true" aria-labelledby="clear-history-title" aria-describedby="clear-history-description">
           <h2 id="clear-history-title">清除下载历史？</h2>

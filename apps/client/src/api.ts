@@ -59,9 +59,22 @@ export function selectDownloadFolder() {
   return Promise.reject(new Error('仅 Android 应用支持选择下载文件夹'));
 }
 
+export function setDownloadPath(path: string) {
+  if (native) return LocalArchive.setDownloadPath({ path });
+  return Promise.reject(new Error('仅 Android 应用支持设置下载位置'));
+}
+
 export function getDownloadFolder() {
   if (native) return LocalArchive.getDownloadFolder();
-  return Promise.resolve({ selected: true });
+  return Promise.resolve({ selected: true, mode: 'downloads' as const, label: 'Download/X Media Archive' });
+}
+
+export function listDownloadedPosts(options: { authorKey?: string; query: string; offset: number; limit: number }) {
+  return LocalArchive.listDownloadedPosts(options);
+}
+
+export function listAuthors(options: { query: string; offset: number; limit: number }) {
+  return LocalArchive.listAuthors(options);
 }
 
 export function getHealth() {
@@ -102,11 +115,6 @@ export async function readClipboardText() {
 export function openMedia(id: string) {
   if (native) return LocalArchive.openMedia({ id });
   window.open(`/api/jobs/media/${id}`, '_blank', 'noopener');
-  return Promise.resolve();
-}
-
-export function shareMedia(id: string) {
-  if (native) return LocalArchive.shareMedia({ id });
   return Promise.resolve();
 }
 

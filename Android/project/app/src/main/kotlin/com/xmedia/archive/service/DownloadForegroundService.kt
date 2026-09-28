@@ -137,6 +137,7 @@ class DownloadForegroundService : Service() {
                 )
             }
             val mediaDirectory = ArchivePaths.postDirectory(resolved.metadata, job.tweetId)
+            val targetRoot = DownloadDestination.currentRoot(this)
             job = job.copy(
                 status = JobStatus.DOWNLOADING.name.lowercase(),
                 progress = 12,
@@ -156,7 +157,7 @@ class DownloadForegroundService : Service() {
                     async {
                         downloadSemaphore.withPermit {
                             if (canceledJobs.contains(job.id)) throw CancellationException("任务已取消")
-                            download(job, item, mediaDirectory)
+                            download(job, item, mediaDirectory, targetRoot)
                         }
                     }
                 }.awaitAll()
@@ -179,14 +180,15 @@ class DownloadForegroundService : Service() {
         }
     }
 
-    private suspend fun download(job: JobEntity, item: MediaEntity, mediaDirectory: String) {
+    private suspend fun download(job: JobEntity, item: MediaEntity, mediaDirectory: String,
+                                 targetRoot: DownloadDestination.TargetRoot) {
         val request = Request.Builder().url(item.sourceUrl).header("User-Agent", "x-media-archive/0.1 Android").build()
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) throw IllegalStateException("媒体下载失败（HTTP ${response.code}）")
             val body = response.body ?: throw IllegalStateException("媒体响应为空")
             val total = body.contentLength().takeIf { it > 0 }
             val contentType = body.contentType()?.toString() ?: mimeFor(item.filename)
-            val uri = DownloadDestination.createTarget(this, mediaDirectory, item.filename, contentType)
+            val uri = DownloadDestination.createTarget(this, mediaDirectory, item.filename, contentType, targetRoot)
             try {
                 val activeItem = item.copy(contentType = contentType, totalBytes = total, mediaStoreUri = uri.toString())
                 ArchiveDatabase.get(this).dao().upsertMedia(listOf(activeItem))
@@ -216,8 +218,9 @@ class DownloadForegroundService : Service() {
                         recordProgress(job.id, item.id, 1.0)
                     }
                 } ?: throw IllegalStateException("无法写入媒体文件")
+                DownloadDestination.finishTarget(this, uri)
             } catch (error: Exception) {
-                contentResolver.delete(uri, null, null)
+                DownloadDestination.deleteTarget(this, uri)
                 throw error
             }
         }

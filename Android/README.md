@@ -67,6 +67,8 @@ Pop-Location
 
 Debug APK 位于 `Android/project/app/build/outputs/apk/debug/app-debug.apk`；发布产物应复制到 `Android/artifacts`，签名文件不得提交到仓库。
 
+媒体默认通过 Android MediaStore 保存到公共 `Download/X Media Archive/作者/推文/`。点应用中的“下载位置”可直接填写 `Download` 下的自定义路径（留空即 `Download` 根目录），也可通过系统文件夹选择器授权其他位置。Android 11 及以上不允许系统选择器直接授权 `Download` 根目录，因此该目录使用应用内路径设置。作者目录和推文目录仍沿用现有命名规则；修改位置只影响之后开始下载的任务，不迁移已有文件。
+
 ## CI
 
 `.github/workflows/android-ci.yml` 是 Android 的完整 GitHub CI，会在 push 到 `main`、Pull Request 和手动触发时执行：
@@ -80,6 +82,8 @@ Debug APK 位于 `Android/project/app/build/outputs/apk/debug/app-debug.apk`；�
 GitHub Actions 会缓存 pnpm store、Gradle 依赖和 Gradle build cache。普通 CI 不执行 Release 签名构建；Release 构建需要配置签名密钥和密码，只应在受信任的发布流程中执行。
 
 本地快速检查可以只运行客户端构建和单元测试：
+
+`connectedDebugAndroidTest` 会安装测试包，并可能卸载或重装应用。只在模拟器或无个人历史记录的测试设备上运行，不能用于保存真实下载历史的手机。
 
 ```powershell
 . .\Android\env.ps1

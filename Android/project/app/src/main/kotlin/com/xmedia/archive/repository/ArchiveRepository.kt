@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.Flow
 import org.json.JSONArray
 import org.json.JSONObject
 import java.time.Instant
+import java.util.Locale
 import java.util.UUID
 
 class ArchiveRepository(context: Context) {
@@ -91,6 +92,28 @@ class ArchiveRepository(context: Context) {
             .put("jobs", JSONArray((active + history).map { job -> toJson(job, dao.mediaForJob(job.id)) }))
             .put("historyTotal", dao.historyCount())
             .put("completedToday", dao.completedOnDate(Instant.now().toString().take(10)))
+    }
+
+    suspend fun downloadedPostsJson(authorKey: String?, rawQuery: String, offset: Int, limit: Int): JSONObject {
+        val query = rawQuery.trim().removePrefix("@").lowercase(Locale.ROOT)
+        val jobs = dao.listDownloadedPosts(authorKey, query, offset, limit)
+        return JSONObject()
+            .put("jobs", JSONArray(jobs.map { job -> toJson(job, dao.mediaForJob(job.id)) }))
+            .put("total", dao.downloadedPostCount(authorKey, query))
+    }
+
+    suspend fun authorsJson(rawQuery: String, offset: Int, limit: Int): JSONObject {
+        val query = rawQuery.trim().removePrefix("@").lowercase(Locale.ROOT)
+        val authors = dao.listAuthors(query, offset, limit).map { group ->
+            JSONObject()
+                .put("authorKey", group.authorKey)
+                .put("authorName", group.authorName?.takeIf(String::isNotBlank) ?: group.username?.takeIf(String::isNotBlank) ?: "作者未知")
+                .put("username", group.username?.takeIf(String::isNotBlank) ?: "")
+                .put("avatarUrl", group.avatarUrl?.takeIf(String::isNotBlank) ?: "")
+                .put("tweetCount", group.tweetCount)
+                .put("latestDownloadedAt", group.latestDownloadedAt)
+        }
+        return JSONObject().put("authors", JSONArray(authors)).put("total", dao.authorCount(query))
     }
 
     suspend fun jobJson(id: String): JSONObject? = dao.getJob(id)?.let { toJson(it, dao.mediaForJob(id)) }

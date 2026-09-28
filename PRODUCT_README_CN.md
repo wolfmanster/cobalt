@@ -2,6 +2,10 @@
 
 面向公开 X 单帖链接的本地媒体归档工具。React + TypeScript 前端负责批量输入、预览和队列交互；Node.js + TypeScript 后端负责任务、元数据、下载和历史；仓库内的 Cobalt Node 服务只负责媒体解析。
 
+## 开发方向
+
+仓库中的独立浏览器版前端 `web/` 已弃用，仅保留作参考，不再为其开发新功能。后续产品功能只面向 Android 端：应用界面源代码位于 `apps/client/`，Android 原生工程和 Capacitor 容器位于 `Android/project/`。
+
 ## 已实现范围
 
 - 单条或多行粘贴，TXT/CSV 文件导入，单批最多 200 条。

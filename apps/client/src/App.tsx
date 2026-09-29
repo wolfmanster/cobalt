@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type TouchEvent } from 'react';
 import { createJobRefresh } from './jobRefresh';
 import { HistoryBrowser } from './HistoryBrowser';
 import { Capacitor } from '@capacitor/core';
@@ -6,6 +6,8 @@ import {
   Archive,
   ArrowDownToLine,
   Check,
+  ChevronLeft,
+  ChevronRight,
   CircleAlert,
   Clock3,
   FileText,
@@ -72,10 +74,10 @@ function revealVideoPreview(video: HTMLVideoElement) {
   video.currentTime = Math.min(0.05, video.duration / 2);
 }
 
-function MediaPreview({ media, onAspectRatio }: { media: MediaItem; onAspectRatio?: (ratio: number) => void }) {
+function MediaPreview({ media, onAspectRatio, controls = true, loading = 'lazy' }: { media: MediaItem; onAspectRatio?: (ratio: number) => void; controls?: boolean; loading?: 'lazy' | 'eager' }) {
   const previewUrl = Capacitor.convertFileSrc(media.previewUrl);
   if (media.kind === 'image' || media.kind === 'gif') {
-    return <img src={previewUrl} alt={media.filename} loading="lazy" onLoad={(event) => {
+    return <img src={previewUrl} alt={media.filename} loading={loading} onLoad={(event) => {
       const image = event.currentTarget;
       if (image.naturalWidth && image.naturalHeight) onAspectRatio?.(image.naturalWidth / image.naturalHeight);
     }} />;
@@ -83,7 +85,7 @@ function MediaPreview({ media, onAspectRatio }: { media: MediaItem; onAspectRati
   return (
     <video
       src={previewUrl}
-      controls
+      controls={controls}
       playsInline
       preload="metadata"
       onLoadedMetadata={(event) => {
@@ -95,18 +97,57 @@ function MediaPreview({ media, onAspectRatio }: { media: MediaItem; onAspectRati
   );
 }
 
-function JobCard({ job, onAction, onOpenMedia, presentation = 'queue' }: { job: DownloadJob; onAction: (action: 'cancel' | 'retry', id: string) => void; onOpenMedia: (id: string) => void; presentation?: 'queue' | 'history' }) {
+function JobCard({ job, onAction, onOpenMedia, onPreviewMedia, presentation = 'queue' }: { job: DownloadJob; onAction: (action: 'cancel' | 'retry', id: string) => void; onOpenMedia: (id: string) => void; onPreviewMedia: (media: MediaItem[], index: number) => void; presentation?: 'queue' | 'history' }) {
   const [avatarFailed, setAvatarFailed] = useState(false);
   const [activeMediaIndex, setActiveMediaIndex] = useState(0);
   const [mediaAspectRatios, setMediaAspectRatios] = useState<Record<string, number>>({});
   const touchStartX = useRef<number | null>(null);
+  const mediaViewportRef = useRef<HTMLDivElement | null>(null);
+  const mediaTileRefs = useRef<(HTMLDivElement | null)[]>([]);
   useEffect(() => setAvatarFailed(false), [job.metadata?.avatarUrl]);
   useEffect(() => setActiveMediaIndex(0), [job.id, job.media.map((media) => media.id).join('|')]);
-  useEffect(() => setMediaAspectRatios({}), [job.id, job.media.map((media) => media.id).join('|')]);
   const active = ['queued', 'resolving', 'downloading'].includes(job.status);
   const complete = job.status === 'completed';
   const historical = presentation === 'history';
   const totalSize = job.media.reduce((sum, item) => sum + (item.size ?? 0), 0);
+  const activeMediaId = job.media[activeMediaIndex]?.id;
+  const activeMediaAspectRatio = activeMediaId ? mediaAspectRatios[activeMediaId] : undefined;
+  const activeMedia = job.media[activeMediaIndex];
+  const mediaInset = historical ? 52 : 56;
+
+  function showMedia(index: number) {
+    setActiveMediaIndex(index);
+    if (!xLoginSupported) return;
+    const viewport = mediaViewportRef.current;
+    const tile = mediaTileRefs.current[index];
+    if (!viewport || !tile) return;
+    const left = viewport.scrollLeft + tile.getBoundingClientRect().left - viewport.getBoundingClientRect().left - mediaInset;
+    viewport.scrollTo({ left, behavior: 'smooth' });
+  }
+
+  function updateActiveMedia() {
+    const viewport = mediaViewportRef.current;
+    if (!viewport || job.media.length < 2) return;
+    if (viewport.scrollWidth > viewport.clientWidth + 1 && viewport.scrollWidth - viewport.scrollLeft - viewport.clientWidth < 2) {
+      setActiveMediaIndex(job.media.length - 1);
+      return;
+    }
+    const bounds = viewport.getBoundingClientRect();
+    const targetLeft = bounds.left + mediaInset;
+    let nearest = 0;
+    let distance = Infinity;
+    mediaTileRefs.current.slice(0, job.media.length).forEach((tile, index) => {
+      if (!tile) return;
+      const rect = tile.getBoundingClientRect();
+      if (rect.right <= bounds.left || rect.left >= bounds.right) return;
+      const candidate = Math.abs(rect.left - targetLeft);
+      if (candidate < distance) {
+        nearest = index;
+        distance = candidate;
+      }
+    });
+    setActiveMediaIndex(nearest);
+  }
 
   return (
     <article className={`job-card ${active ? 'is-active' : ''} ${historical ? 'is-history-post' : ''}`}>
@@ -156,22 +197,15 @@ function JobCard({ job, onAction, onOpenMedia, presentation = 'queue' }: { job: 
           </div>
         )}
 
-        {complete && job.media.length > 0 && (xLoginSupported && historical ? (
-          <div
-            className={`history-media-grid count-${Math.min(job.media.length, 4)}`}
-            style={job.media.length <= 2 ? { gridTemplateColumns: job.media.map((media) => `${mediaAspectRatios[media.id] ?? 1}fr`).join(' ') } : undefined}
-            aria-label={`此推文的 ${job.media.length} 个媒体文件`}
-          >
-            {job.media.map((media) => <div className="media-tile" key={media.id}><MediaPreview media={media} onAspectRatio={(ratio) => {
-              setMediaAspectRatios((current) => current[media.id] === ratio ? current : { ...current, [media.id]: ratio });
-            }} /></div>)}
-          </div>
-        ) : (
-          <div className="media-carousel" aria-label={`此推文的 ${job.media.length} 个媒体文件`}>
+        {complete && job.media.length > 0 && (
+          <div className={`media-carousel ${job.media.length === 1 ? 'is-single' : ''}`} aria-label={`此推文的 ${job.media.length} 个媒体文件`}>
             <div
               className="media-viewport"
-              onTouchStart={(event) => { touchStartX.current = event.touches[0]?.clientX ?? null; }}
-              onTouchEnd={(event) => {
+              ref={mediaViewportRef}
+              style={!xLoginSupported && activeMediaAspectRatio ? { aspectRatio: `${activeMediaAspectRatio}` } : undefined}
+              onScroll={xLoginSupported ? updateActiveMedia : undefined}
+              onTouchStart={xLoginSupported ? undefined : (event) => { touchStartX.current = event.touches[0]?.clientX ?? null; }}
+              onTouchEnd={xLoginSupported ? undefined : (event) => {
                 const startX = touchStartX.current;
                 touchStartX.current = null;
                 if (startX === null || job.media.length < 2) return;
@@ -179,33 +213,47 @@ function JobCard({ job, onAction, onOpenMedia, presentation = 'queue' }: { job: 
                 if (Math.abs(delta) < 40) return;
                 setActiveMediaIndex((index) => Math.max(0, Math.min(job.media.length - 1, index + (delta < 0 ? 1 : -1))));
               }}
-              onTouchCancel={() => { touchStartX.current = null; }}
+              onTouchCancel={xLoginSupported ? undefined : () => { touchStartX.current = null; }}
             >
-              <div className="media-track" style={{ transform: `translateX(-${activeMediaIndex * 100}%)` }}>
-                {job.media.map((media) => (
-                  <div className="media-tile" key={media.id}>
-                    <MediaPreview media={media} />
-                    {!historical && <div className="media-caption">
+              <div className="media-track" style={!xLoginSupported ? { transform: `translateX(-${activeMediaIndex * 100}%)` } : undefined}>
+                {job.media.map((media, index) => {
+                  const preview = <MediaPreview media={media} controls={!historical} onAspectRatio={(ratio) => {
+                      setMediaAspectRatios((current) => current[media.id] === ratio ? current : { ...current, [media.id]: ratio });
+                    }} />;
+                  return <div className="media-tile" key={media.id}
+                    ref={(node) => { mediaTileRefs.current[index] = node; }}
+                    style={xLoginSupported && job.media.length > 1 ? { aspectRatio: `${mediaAspectRatios[media.id] ?? 1}` } : undefined}
+                  >
+                    {xLoginSupported && historical
+                      ? <button type="button" className="media-open-preview" aria-label={`预览 ${media.filename}`} onClick={() => onPreviewMedia(job.media, index)}>{preview}</button>
+                      : xLoginSupported && (media.kind === 'image' || media.kind === 'gif')
+                        ? <button type="button" className="media-open-preview" aria-label={`查看 ${media.filename}`} onClick={() => onOpenMedia(media.id)}>{preview}</button>
+                      : preview}
+                    {!historical && !xLoginSupported && <div className="media-caption">
                       <span>{media.kind === 'video' ? <Video size={13} /> : <ImageIcon size={13} />}{media.filename}</span>
                       <button type="button" title={`打开 ${media.filename}`} aria-label={`打开 ${media.filename}`} onClick={() => onOpenMedia(media.id)}><FolderOpen size={15} /></button>
                     </div>}
-                  </div>
-                ))}
+                  </div>;
+                })}
               </div>
             </div>
+            {!historical && xLoginSupported && activeMedia && <div className="media-caption">
+              <span>{activeMedia.kind === 'video' ? <Video size={13} /> : <ImageIcon size={13} />}{activeMedia.filename}</span>
+              <button type="button" title={`打开 ${activeMedia.filename}`} aria-label={`打开 ${activeMedia.filename}`} onClick={() => onOpenMedia(activeMedia.id)}><FolderOpen size={15} /></button>
+            </div>}
             {job.media.length > 1 && <div className="media-pagination" role="group" aria-label="选择此推文的媒体文件">
               {(() => {
                 const maxDots = 7;
                 const firstDot = Math.max(0, Math.min(activeMediaIndex - Math.floor(maxDots / 2), job.media.length - maxDots));
                 return job.media.slice(firstDot, firstDot + maxDots).map((media, offset) => {
                   const index = firstDot + offset;
-                  return <button key={media.id} type="button" className={index === activeMediaIndex ? 'is-active' : ''} aria-label={`查看第 ${index + 1} 个文件，共 ${job.media.length} 个`} aria-current={index === activeMediaIndex ? 'true' : undefined} onClick={() => setActiveMediaIndex(index)} />;
+                  return <button key={media.id} type="button" className={index === activeMediaIndex ? 'is-active' : ''} aria-label={`查看第 ${index + 1} 个文件，共 ${job.media.length} 个`} aria-current={index === activeMediaIndex ? 'true' : undefined} onClick={() => showMedia(index)} />;
                 });
               })()}
             </div>}
             {job.media.length > 1 && <span className="media-counter" aria-live="polite">{activeMediaIndex + 1} / {job.media.length}</span>}
           </div>
-        ))}
+        )}
       </div>
 
       {!(historical && complete) && <footer className="job-footer">
@@ -228,6 +276,7 @@ export default function App() {
   const [input, setInput] = useState('');
   const [tab, setTab] = useState<'queue' | 'history' | 'search'>('queue');
   const [historyView, setHistoryView] = useState<'all' | 'authors'>('all');
+  const [historyPreview, setHistoryPreview] = useState<{ media: MediaItem[]; index: number } | null>(null);
   const [archiveRevision, setArchiveRevision] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -244,18 +293,67 @@ export default function App() {
   const [showSessionPanel, setShowSessionPanel] = useState(false);
   const [sessionBusy, setSessionBusy] = useState(false);
   const archiveBackHandler = useRef<(() => boolean) | null>(null);
+  const historyPreviewRef = useRef<{ media: MediaItem[]; index: number } | null>(null);
+  const historyPreviewScrollY = useRef<number | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const handledSharedLinks = useRef(new Set<string>());
   const historyPageRef = useRef(0);
+  const historyPreviewTouch = useRef<{ x: number; y: number; edge: boolean } | null>(null);
   const previousHistoryTotal = useRef<number | null>(null);
   const previousTab = useRef(tab);
   const [searchQuery, setSearchQuery] = useState('');
   const urls = useMemo(() => extractUrls(input), [input]);
+  const historyPreviewOpen = historyPreview !== null;
 
   const registerArchiveBackHandler = useCallback((handler: (() => boolean) | null) => {
     archiveBackHandler.current = handler;
   }, []);
+
+  function previewHistoryMedia(media: MediaItem[], index: number) {
+    const next = { media, index };
+    historyPreviewScrollY.current = window.scrollY;
+    historyPreviewRef.current = next;
+    setHistoryPreview(next);
+  }
+
+  function closeHistoryPreview() {
+    historyPreviewRef.current = null;
+    setHistoryPreview(null);
+  }
+
+  function stepHistoryPreview(delta: number) {
+    const current = historyPreviewRef.current;
+    if (!current) return;
+    const next = {
+      ...current,
+      index: Math.max(0, Math.min(current.media.length - 1, current.index + delta)),
+    };
+    historyPreviewRef.current = next;
+    setHistoryPreview(next);
+  }
+
+  function startHistoryPreviewSwipe(event: TouchEvent<HTMLDivElement>) {
+    const touch = event.touches[0];
+    if (!touch) return;
+    historyPreviewTouch.current = {
+      x: touch.clientX,
+      y: touch.clientY,
+      edge: touch.clientX <= 24 || touch.clientX >= window.innerWidth - 24,
+    };
+  }
+
+  function finishHistoryPreviewSwipe(event: TouchEvent<HTMLDivElement>) {
+    const start = historyPreviewTouch.current;
+    historyPreviewTouch.current = null;
+    const touch = event.changedTouches[0];
+    const current = historyPreviewRef.current;
+    if (!start || start.edge || !touch || !current || current.media.length < 2) return;
+    const deltaX = touch.clientX - start.x;
+    const deltaY = touch.clientY - start.y;
+    if (Math.abs(deltaX) < 48 || Math.abs(deltaX) < Math.abs(deltaY) * 1.25) return;
+    stepHistoryPreview(deltaX > 0 ? 1 : -1);
+  }
 
   const loadJobs = useMemo(() => createJobRefresh(listJobs, HISTORY_PAGE_SIZE, (result, page) => {
     if (xLoginSupported && previousHistoryTotal.current !== null && previousHistoryTotal.current !== result.historyTotal) {
@@ -353,6 +451,12 @@ export default function App() {
         setShowSessionPanel(false);
         return true;
       }
+      if (historyPreviewRef.current) {
+        historyPreviewRef.current = null;
+        setHistoryPreview(null);
+        historyPreviewTouch.current = null;
+        return true;
+      }
       if (archiveBackHandler.current?.()) return true;
       if (tab !== 'queue') {
         setTab('queue');
@@ -366,6 +470,18 @@ export default function App() {
       if (browserWindow.__cobaltGoBack === handleBack) delete browserWindow.__cobaltGoBack;
     };
   }, [clearConfirmationOpen, folderDialogOpen, showSessionPanel, tab]);
+
+  useEffect(() => {
+    if (!historyPreviewOpen) return;
+    const scrollY = historyPreviewScrollY.current ?? window.scrollY;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      historyPreviewScrollY.current = null;
+      window.scrollTo({ top: scrollY, behavior: 'auto' });
+    };
+  }, [historyPreviewOpen]);
 
   useEffect(() => {
     let disposed = false;
@@ -652,7 +768,7 @@ export default function App() {
                 <section className="workspace">
                   <div className="workspace-head"><div className="workspace-title"><h2>进行中的任务</h2></div></div>
                   {activeJobs.length ? (
-                    <div className="job-list">{activeJobs.map((job) => <JobCard key={job.id} job={job} onAction={action} onOpenMedia={(id) => void openJobMedia(id)} />)}</div>
+                    <div className="job-list">{activeJobs.map((job) => <JobCard key={job.id} job={job} onAction={action} onOpenMedia={(id) => void openJobMedia(id)} onPreviewMedia={previewHistoryMedia} />)}</div>
                   ) : (
                     <div className="empty-state">
                       <span><Pause size={25} /></span>
@@ -672,7 +788,7 @@ export default function App() {
                   searchQuery={searchQuery}
                   onSearchQueryChange={setSearchQuery}
                   onDetailBackChange={registerArchiveBackHandler}
-                  renderJob={(job) => <JobCard job={job} onAction={action} onOpenMedia={(id) => void openJobMedia(id)} presentation="history" />}
+                  renderJob={(job) => <JobCard job={job} onAction={action} onOpenMedia={(id) => void openJobMedia(id)} onPreviewMedia={previewHistoryMedia} presentation="history" />}
                   onError={setNotice}
                 />
               </section>
@@ -691,11 +807,11 @@ export default function App() {
                     mode="authors"
                     revision={archiveRevision}
                     onDetailBackChange={registerArchiveBackHandler}
-                    renderJob={(job) => <JobCard job={job} onAction={action} onOpenMedia={(id) => void openJobMedia(id)} presentation="history" />}
+                    renderJob={(job) => <JobCard job={job} onAction={action} onOpenMedia={(id) => void openJobMedia(id)} onPreviewMedia={previewHistoryMedia} presentation="history" />}
                     onError={setNotice}
                   /> : historyJobs.length ? (
                     <>
-                      <div className="job-list history-post-list">{historyJobs.map((job) => <JobCard key={job.id} job={job} onAction={action} onOpenMedia={(id) => void openJobMedia(id)} presentation="history" />)}</div>
+                      <div className="job-list history-post-list">{historyJobs.map((job) => <JobCard key={job.id} job={job} onAction={action} onOpenMedia={(id) => void openJobMedia(id)} onPreviewMedia={previewHistoryMedia} presentation="history" />)}</div>
                       {historyTotal > HISTORY_PAGE_SIZE && <nav className="history-pagination" aria-label="下载历史分页">
                         <button onClick={() => showHistoryPage(historyPage - 1)} disabled={historyPage === 0}>上一页</button>
                         <span>第 {historyPage + 1} / {Math.ceil(historyTotal / HISTORY_PAGE_SIZE)} 页</span>
@@ -723,7 +839,7 @@ export default function App() {
               </div>}
               {visibleJobs.length ? (
                 <>
-                  <div className={`job-list ${tab === 'history' ? 'history-post-list' : ''}`}>{visibleJobs.map((job) => <JobCard key={job.id} job={job} onAction={action} onOpenMedia={(id) => void openJobMedia(id)} presentation={tab === 'history' ? 'history' : 'queue'} />)}</div>
+                  <div className={`job-list ${tab === 'history' ? 'history-post-list' : ''}`}>{visibleJobs.map((job) => <JobCard key={job.id} job={job} onAction={action} onOpenMedia={(id) => void openJobMedia(id)} onPreviewMedia={previewHistoryMedia} presentation={tab === 'history' ? 'history' : 'queue'} />)}</div>
                   {tab === 'history' && historyTotal > HISTORY_PAGE_SIZE && <nav className="history-pagination" aria-label="下载历史分页">
                     <button onClick={() => showHistoryPage(historyPage - 1)} disabled={historyPage === 0}>上一页</button>
                     <span>第 {historyPage + 1} / {Math.ceil(historyTotal / HISTORY_PAGE_SIZE)} 页</span>
@@ -745,6 +861,23 @@ export default function App() {
           </>
         )}
       </main>
+
+      {xLoginSupported && historyPreview && historyPreview.media[historyPreview.index] && <section className="history-media-viewer" role="dialog" aria-modal="true" aria-label={`媒体预览：${historyPreview.media[historyPreview.index].filename}`}>
+        <header className="history-media-viewer-header">
+          <button type="button" className="history-media-viewer-close" onClick={closeHistoryPreview} aria-label="返回历史记录"><X size={24} /></button>
+          <span>{historyPreview.index + 1} / {historyPreview.media.length}</span>
+          <span className="history-media-viewer-header-spacer" aria-hidden="true" />
+        </header>
+        <div className="history-media-viewer-stage" onTouchStart={startHistoryPreviewSwipe} onTouchEnd={finishHistoryPreviewSwipe} onTouchCancel={() => { historyPreviewTouch.current = null; }}>
+          {historyPreview.index > 0 && <button type="button" className="history-media-viewer-arrow previous" onClick={() => stepHistoryPreview(-1)} aria-label="查看上一个媒体"><ChevronLeft size={30} /></button>}
+          <MediaPreview key={historyPreview.media[historyPreview.index].id} media={historyPreview.media[historyPreview.index]} controls loading="eager" />
+          {historyPreview.index < historyPreview.media.length - 1 && <button type="button" className="history-media-viewer-arrow next" onClick={() => stepHistoryPreview(1)} aria-label="查看下一个媒体"><ChevronRight size={30} /></button>}
+        </div>
+        <footer className="history-media-viewer-footer">
+          <span>{historyPreview.media[historyPreview.index].filename}</span>
+          {historyPreview.media.length > 1 && <small>向右滑动查看下一个</small>}
+        </footer>
+      </section>}
 
       <footer className="page-footer"><span>媒体由本地服务解析与保存</span><span>{xLoginSupported && sessionConfigured ? 'X 会话经 Android Keystore 加密' : '公开帖子无需登录'}</span></footer>
       <nav className={`mobile-nav ${xLoginSupported ? 'has-search' : ''}`} aria-label="主导航">

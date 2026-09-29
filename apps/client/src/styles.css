@@ -812,6 +812,8 @@ main { width: min(1120px, calc(100% - 56px)); margin: 0 auto; }
 .job-card.is-history-post .author-copy { flex: 1; margin-left: 12px; }
 .job-card.is-history-post .author-name { max-width: none; color: #0f1419; font-size: 14px; }
 .job-card.is-history-post .author-name span { display: inline; margin-left: 4px; color: #536471; font-size: 13px; font-weight: 400; }
+.job-card.is-history-post .history-open-media { width: 44px; height: 44px; margin: 0 0 0 auto; border: 0; border-radius: 50%; display: grid; place-items: center; flex: none; color: #1d9bf0; background: #e8f5fd; cursor: pointer; }
+.job-card.is-history-post .history-open-media:active { background: #d7eefa; }
 .job-card.is-history-post .post-meta { margin-top: 3px; gap: 0; color: #536471; font-family: inherit; font-size: 12px; font-weight: 400; line-height: 1.4; }
 .job-card.is-history-post .status { height: 24px; padding: 0 8px; font-size: 10px; }
 .job-card.is-history-post .status.success { display: none; }
@@ -861,6 +863,15 @@ main { width: min(1120px, calc(100% - 56px)); margin: 0 auto; }
   .native-history-workspace .archive-view-tabs { margin-top: 18px; }
 }
 
+@media (max-width: 760px) {
+  .is-native .topbar.is-compact {
+    height: calc(12px + env(safe-area-inset-top));
+    padding: env(safe-area-inset-top) 16px 0;
+    border-bottom: 0;
+  }
+  .is-native .native-page .workspace { margin-top: 12px; }
+}
+
 /* Native client follows X's timeline surface and the device color scheme. */
 .app-shell.is-native {
   --ink: #0f1419;
@@ -873,7 +884,7 @@ main { width: min(1120px, calc(100% - 56px)); margin: 0 auto; }
   --outline: #eff3f4;
   --green: #00a37a;
   color: var(--ink);
-  color-scheme: light dark;
+  color-scheme: light;
   background: #fff;
 }
 .is-native .topbar { border-bottom-color: var(--outline); background: rgba(255, 255, 255, .94); }
@@ -917,11 +928,44 @@ main { width: min(1120px, calc(100% - 56px)); margin: 0 auto; }
 .is-native .empty-state > span { border-radius: 50%; }
 .is-native .privacy-note { margin-top: 28px; }
 .is-native .archive-view-tabs button.selected { color: var(--ink); }
+.is-native .native-history-workspace > .archive-view-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  padding-top: env(safe-area-inset-top, 0px);
+  background: #fff;
+}
 .is-native .archive-search, .is-native .archive-empty, .is-native .archive-author { color: var(--ink); background: #fff; }
 .is-native .mobile-nav { border-color: var(--outline); background: rgba(255, 255, 255, .96); box-shadow: none; }
+.is-native .mobile-nav button { font-size: 12px; }
 .is-native .mobile-nav button.selected { color: var(--primary-strong); }
-.is-native .mobile-nav .mobile-add > span { border-radius: 50%; background: var(--primary); }
+.is-native .mobile-nav .mobile-add { transform: none; color: var(--primary-strong); }
+.is-native .mobile-nav .mobile-add > span {
+  width: auto;
+  height: auto;
+  color: inherit;
+  background: transparent;
+  box-shadow: none;
+}
+.is-native .mobile-nav .mobile-add > span svg { width: 21px; height: 21px; }
+.is-native .mobile-nav .mobile-add > small {
+  display: block;
+  color: inherit;
+  font-size: inherit;
+  font-weight: 700;
+}
 .is-native .media-carousel { position: relative; min-width: 0; margin: 18px 0 0 56px; }
+.is-native .job-card.is-history-post .history-media-grid { min-width: 0; margin: 12px 0 0 52px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
+.is-native .job-card.is-history-post .history-media-grid.count-1 { grid-template-columns: minmax(0, 1fr); }
+.is-native .job-card.is-history-post .history-media-grid .media-tile { min-width: 0; align-self: stretch; overflow: hidden; border: 0; border-radius: 12px; background: transparent; }
+.is-native .job-card.is-history-post .history-media-grid .media-tile > img,
+.is-native .job-card.is-history-post .history-media-grid .media-tile > video { width: 100%; height: 100%; aspect-ratio: auto; display: block; object-fit: cover; background: transparent; }
+.is-native .job-card.is-history-post .history-media-grid.count-1 .media-tile > img { width: 100%; height: auto; aspect-ratio: auto; display: block; object-fit: contain; background: transparent; }
+.is-native .job-card.is-history-post .history-media-grid.count-2 .media-tile > img { width: 100%; height: 100%; aspect-ratio: auto; display: block; object-fit: cover; background: transparent; }
+.is-native .job-card.is-history-post .history-media-grid.count-3,
+.is-native .job-card.is-history-post .history-media-grid.count-4 { grid-auto-rows: clamp(140px, 52vw, 260px); }
+.is-native .job-card.is-history-post .history-media-grid.count-3 .media-tile > img,
+.is-native .job-card.is-history-post .history-media-grid.count-4 .media-tile > img { width: 100%; height: 100%; aspect-ratio: auto; display: block; object-fit: cover; background: transparent; }
 .is-native .media-viewport { overflow: hidden; border: 1px solid #cfd9de; border-radius: 16px; touch-action: pan-y; }
 .is-native .media-track { display: flex; transition: transform .24s ease; will-change: transform; }
 .is-native .media-tile { flex: 0 0 100%; min-width: 0; border: 0; border-radius: 0; background: var(--surface-high); }
@@ -935,50 +979,6 @@ main { width: min(1120px, calc(100% - 56px)); margin: 0 auto; }
 .is-native .job-card.is-history-post .media-carousel { margin: 12px 0 0 52px; }
 .is-native .job-card.is-history-post .media-tile { border: 0; }
 .is-native .confirmation-dialog, .is-native .folder-dialog { color: var(--ink); background: var(--surface); }
-
-@media (prefers-color-scheme: dark) {
-  .app-shell.is-native {
-    --ink: #e7e9ea;
-    --muted: #8b98a5;
-    --primary: #1d9bf0;
-    --primary-strong: #1d9bf0;
-    --primary-soft: #0f2535;
-    --surface: #000;
-    --surface-high: #16181c;
-    --outline: #2f3336;
-    --green: #00ba7c;
-    background: #000;
-  }
-  .is-native .topbar, .is-native .mobile-nav { border-color: var(--outline); background: rgba(0, 0, 0, .94); }
-  .is-native .ingest-panel, .is-native .auth-session-panel, .is-native .quick-stats > div,
-  .is-native .job-card:not(.is-history-post), .is-native .job-card.is-history-post,
-  .is-native .empty-state, .is-native .privacy-note, .is-native .job-footer,
-  .is-native .media-caption, .is-native .history-post-list, .is-native .archive-post-list,
-  .is-native .archive-author-list, .is-native .archive-author, .is-native .archive-search,
-  .is-native .archive-empty { color: var(--ink); background: #000; }
-  .is-native .ingest-panel { border-bottom-color: #16181c; }
-  .is-native .composer, .is-native .archive-search { border-color: var(--outline); background: #16181c; }
-  .is-native .drop-zone { color: var(--primary-strong); background: #0f2535; }
-  .is-native .workspace-title h2, .is-native .quick-stats strong,
-  .is-native .author-name, .is-native .post-text, .is-native .archive-view-tabs button.selected,
-  .is-native .archive-author-main strong, .is-native .archive-detail-profile h2 { color: var(--ink); }
-  .is-native .job-card.is-history-post .author-name, .is-native .job-card.is-history-post .post-text,
-  .is-native .archive-result-section h3 { color: var(--ink); }
-  .is-native .tabs button.selected { color: var(--ink); }
-  .is-native .job-card:not(.is-history-post):hover, .is-native .job-card.is-history-post:hover,
-  .is-native .archive-author:hover { background: #080a0c; }
-  .is-native .media-viewport { border-color: var(--outline); }
-  .is-native .media-tile { background: #16181c; }
-  .is-native .archive-detail-screen, .is-native .archive-detail-header { color: var(--ink); background: #000; }
-  .is-native .archive-detail-header, .is-native .archive-author, .is-native .history-post-list,
-  .is-native .archive-post-list, .is-native .archive-author-list { border-color: var(--outline); }
-  .is-native .archive-view-tabs { border-color: var(--outline); }
-  .is-native .archive-view-tabs button, .is-native .archive-author-main small,
-  .is-native .archive-author-stats small, .is-native .archive-detail-profile p { color: var(--muted); }
-  .is-native .confirmation-backdrop { background: rgba(0, 0, 0, .72); }
-  .is-native .confirmation-dialog { border-color: var(--outline); background: #16181c; }
-  .is-native .confirmation-cancel, .is-native .folder-path-input { border-color: var(--outline); color: var(--ink); background: #202327; }
-}
 
 @media (max-width: 760px) {
   .is-native .media-carousel { margin: 14px 0 0; }

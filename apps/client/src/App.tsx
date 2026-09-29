@@ -72,10 +72,13 @@ function revealVideoPreview(video: HTMLVideoElement) {
   video.currentTime = Math.min(0.05, video.duration / 2);
 }
 
-function MediaPreview({ media }: { media: MediaItem }) {
+function MediaPreview({ media, onAspectRatio }: { media: MediaItem; onAspectRatio?: (ratio: number) => void }) {
   const previewUrl = Capacitor.convertFileSrc(media.previewUrl);
   if (media.kind === 'image' || media.kind === 'gif') {
-    return <img src={previewUrl} alt={media.filename} loading="lazy" />;
+    return <img src={previewUrl} alt={media.filename} loading="lazy" onLoad={(event) => {
+      const image = event.currentTarget;
+      if (image.naturalWidth && image.naturalHeight) onAspectRatio?.(image.naturalWidth / image.naturalHeight);
+    }} />;
   }
   return (
     <video
@@ -83,7 +86,11 @@ function MediaPreview({ media }: { media: MediaItem }) {
       controls
       playsInline
       preload="metadata"
-      onLoadedMetadata={(event) => revealVideoPreview(event.currentTarget)}
+      onLoadedMetadata={(event) => {
+        const video = event.currentTarget;
+        revealVideoPreview(video);
+        if (video.videoWidth && video.videoHeight) onAspectRatio?.(video.videoWidth / video.videoHeight);
+      }}
     />
   );
 }
@@ -91,9 +98,11 @@ function MediaPreview({ media }: { media: MediaItem }) {
 function JobCard({ job, onAction, onOpenMedia, presentation = 'queue' }: { job: DownloadJob; onAction: (action: 'cancel' | 'retry', id: string) => void; onOpenMedia: (id: string) => void; presentation?: 'queue' | 'history' }) {
   const [avatarFailed, setAvatarFailed] = useState(false);
   const [activeMediaIndex, setActiveMediaIndex] = useState(0);
+  const [mediaAspectRatios, setMediaAspectRatios] = useState<Record<string, number>>({});
   const touchStartX = useRef<number | null>(null);
   useEffect(() => setAvatarFailed(false), [job.metadata?.avatarUrl]);
   useEffect(() => setActiveMediaIndex(0), [job.id, job.media.map((media) => media.id).join('|')]);
+  useEffect(() => setMediaAspectRatios({}), [job.id, job.media.map((media) => media.id).join('|')]);
   const active = ['queued', 'resolving', 'downloading'].includes(job.status);
   const complete = job.status === 'completed';
   const historical = presentation === 'history';
@@ -125,6 +134,13 @@ function JobCard({ job, onAction, onOpenMedia, presentation = 'queue' }: { job: 
           <span className={`status ${STATUS[job.status].className}`}>
             {statusIcon(job.status)} {STATUS[job.status].label}
           </span>
+          {historical && complete && job.media.length > 0 && <button
+            type="button"
+            className="history-open-media"
+            title={`打开 ${job.media[activeMediaIndex]?.filename ?? job.media[0].filename}`}
+            aria-label={`打开 ${job.media[activeMediaIndex]?.filename ?? job.media[0].filename}`}
+            onClick={() => onOpenMedia(job.media[activeMediaIndex]?.id ?? job.media[0].id)}
+          ><FolderOpen size={20} /></button>}
         </div>
 
         {job.metadata?.text && <p className="post-text">{job.metadata.text}</p>}
@@ -140,7 +156,17 @@ function JobCard({ job, onAction, onOpenMedia, presentation = 'queue' }: { job: 
           </div>
         )}
 
-        {complete && job.media.length > 0 && (
+        {complete && job.media.length > 0 && (xLoginSupported && historical ? (
+          <div
+            className={`history-media-grid count-${Math.min(job.media.length, 4)}`}
+            style={job.media.length <= 2 ? { gridTemplateColumns: job.media.map((media) => `${mediaAspectRatios[media.id] ?? 1}fr`).join(' ') } : undefined}
+            aria-label={`此推文的 ${job.media.length} 个媒体文件`}
+          >
+            {job.media.map((media) => <div className="media-tile" key={media.id}><MediaPreview media={media} onAspectRatio={(ratio) => {
+              setMediaAspectRatios((current) => current[media.id] === ratio ? current : { ...current, [media.id]: ratio });
+            }} /></div>)}
+          </div>
+        ) : (
           <div className="media-carousel" aria-label={`此推文的 ${job.media.length} 个媒体文件`}>
             <div
               className="media-viewport"
@@ -159,10 +185,10 @@ function JobCard({ job, onAction, onOpenMedia, presentation = 'queue' }: { job: 
                 {job.media.map((media) => (
                   <div className="media-tile" key={media.id}>
                     <MediaPreview media={media} />
-                    <div className="media-caption">
+                    {!historical && <div className="media-caption">
                       <span>{media.kind === 'video' ? <Video size={13} /> : <ImageIcon size={13} />}{media.filename}</span>
                       <button type="button" title={`打开 ${media.filename}`} aria-label={`打开 ${media.filename}`} onClick={() => onOpenMedia(media.id)}><FolderOpen size={15} /></button>
-                    </div>
+                    </div>}
                   </div>
                 ))}
               </div>
@@ -179,17 +205,17 @@ function JobCard({ job, onAction, onOpenMedia, presentation = 'queue' }: { job: 
             </div>}
             {job.media.length > 1 && <span className="media-counter" aria-live="polite">{activeMediaIndex + 1} / {job.media.length}</span>}
           </div>
-        )}
+        ))}
       </div>
 
-      <footer className="job-footer">
+      {!(historical && complete) && <footer className="job-footer">
         {!historical && <span>{job.media.length ? `${job.media.length} 个媒体 · ${formatBytes(totalSize || undefined)}` : `第 ${job.attempts || 1} 次尝试`}</span>}
         <div className="job-actions">
           {active && <button className="text-button danger-text" onClick={() => onAction('cancel', job.id)}><X size={15} />取消</button>}
           {(job.status === 'failed' || job.status === 'canceled') && <button className="text-button" onClick={() => onAction('retry', job.id)}><RotateCcw size={14} />重试</button>}
-          {complete && job.media.length === 1 && <button type="button" className="text-button" onClick={() => onOpenMedia(job.media[0].id)}><FolderOpen size={15} />打开文件</button>}
+          {complete && job.media.length === 1 && !historical && <button type="button" className="text-button" onClick={() => onOpenMedia(job.media[0].id)}><FolderOpen size={15} />打开文件</button>}
         </div>
-      </footer>
+      </footer>}
     </article>
   );
 }
@@ -307,7 +333,7 @@ export default function App() {
 
   useEffect(() => {
     if (!xLoginSupported) return;
-    if (previousTab.current !== tab) window.scrollTo({ top: 0, behavior: 'smooth' });
+    if (previousTab.current !== tab) window.scrollTo({ top: 0, behavior: 'auto' });
     previousTab.current = tab;
   }, [tab]);
 
@@ -586,29 +612,31 @@ export default function App() {
 
   return (
     <div className={`app-shell ${xLoginSupported ? 'is-native' : ''}`}>
-      <header className="topbar">
+      <header className={`topbar ${tab !== 'queue' ? 'is-compact' : ''}`}>
         <div className="topbar-actions">
-          <button
-            className={`folder-button ${folderReady ? 'is-ready' : ''}`}
-            type="button"
-            title={`下载位置：${folderLabel}，点击更改`}
-            onClick={() => xLoginSupported ? setFolderDialogOpen(true) : void chooseDownloadFolder()}
-            disabled={choosingFolder}
-          >
-            {choosingFolder ? <LoaderCircle className="spin" size={17} /> : folderReady ? <FolderCheck size={17} /> : <FolderOpen size={17} />}
-            <span>{xLoginSupported ? '下载位置' : folderReady ? '文件夹已设置' : '选择下载文件夹'}</span>
-          </button>
-          <button
-            className={`session-button ${sessionConfigured ? 'is-ready' : ''}`}
-            type="button"
-            title={sessionConfigured ? '管理已保存的 X 登录' : '登录 X 并加密保存 auth_token、ct0'}
-            aria-label={sessionConfigured ? '管理已保存的 X 登录' : '登录 X 并加密保存 auth_token、ct0'}
-            onClick={() => setShowSessionPanel((visible) => !visible)}
-            disabled={sessionBusy}
-          >
-            {sessionBusy ? <LoaderCircle className="spin" size={17} /> : <ShieldCheck size={17} />}
-            <span>{sessionConfigured ? 'X 已登录' : '登录 X'}</span>
-          </button>
+          {tab === 'queue' && <>
+            <button
+              className={`folder-button ${folderReady ? 'is-ready' : ''}`}
+              type="button"
+              title={`下载位置：${folderLabel}，点击更改`}
+              onClick={() => xLoginSupported ? setFolderDialogOpen(true) : void chooseDownloadFolder()}
+              disabled={choosingFolder}
+            >
+              {choosingFolder ? <LoaderCircle className="spin" size={17} /> : folderReady ? <FolderCheck size={17} /> : <FolderOpen size={17} />}
+              <span>{xLoginSupported ? '下载位置' : folderReady ? '文件夹已设置' : '选择下载文件夹'}</span>
+            </button>
+            <button
+              className={`session-button ${sessionConfigured ? 'is-ready' : ''}`}
+              type="button"
+              title={sessionConfigured ? '管理已保存的 X 登录' : '登录 X 并加密保存 auth_token、ct0'}
+              aria-label={sessionConfigured ? '管理已保存的 X 登录' : '登录 X 并加密保存 auth_token、ct0'}
+              onClick={() => setShowSessionPanel((visible) => !visible)}
+              disabled={sessionBusy}
+            >
+              {sessionBusy ? <LoaderCircle className="spin" size={17} /> : <ShieldCheck size={17} />}
+              <span>{sessionConfigured ? 'X 已登录' : '登录 X'}</span>
+            </button>
+          </>}
           <div className={`service-state ${serviceHealthy === false ? 'is-offline' : ''}`}><span /> {serviceHealthy === null ? '正在检查本地服务' : serviceHealthy ? '本地服务可用' : '本地服务不可用'}</div>
         </div>
       </header>

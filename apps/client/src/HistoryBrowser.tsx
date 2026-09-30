@@ -47,6 +47,14 @@ function EmptyResults({ searching, label }: { searching: boolean; label: string 
   return <div className="archive-empty" role="status">{searching ? `没有匹配的${label}` : `还没有${label}`}</div>;
 }
 
+function ArchiveLoading({ label }: { label: string }) {
+  return <div className="archive-loading" role="status" aria-label={label}>
+    {[0, 1, 2].map((row) => <div className="archive-skeleton-row" key={row} aria-hidden="true">
+      <span className="archive-skeleton-avatar" /><span className="archive-skeleton-copy"><i /><i /></span>
+    </div>)}
+  </div>;
+}
+
 function formatRecent(value: string) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? '时间未知' : RECENT_DATE_FORMATTER.format(date);
@@ -153,6 +161,7 @@ export function HistoryBrowser({ mode, revision, renderJob, onError, searchQuery
         {posts && (posts.items.length
           ? <div className="job-list archive-post-list">{posts.items.map((job) => <div key={job.id}>{renderJob(job)}</div>)}</div>
           : <EmptyResults searching label="推文" />)}
+        {!posts && <ArchiveLoading label="正在加载推文" />}
         {posts && <PageNav page={postPage} total={posts.total} onPage={setPostPage} />}
       </section>}
 
@@ -166,6 +175,7 @@ export function HistoryBrowser({ mode, revision, renderJob, onError, searchQuery
             <span className="archive-author-stats"><small>最近 {formatRecent(author.latestDownloadedAt)}</small></span>
           </button>)}</div>
         : <EmptyResults searching={searching} label="作者" />)}
+      {!authors && <ArchiveLoading label="正在加载作者" />}
       {authors && <PageNav page={authorPage} total={authors.total} onPage={setAuthorPage} />}
       </section>}
     </div>
@@ -184,6 +194,7 @@ export function HistoryBrowser({ mode, revision, renderJob, onError, searchQuery
         {detailPosts && (detailPosts.items.length
           ? <div className="job-list archive-post-list">{detailPosts.items.map((job) => <div key={job.id}>{renderJob(job)}</div>)}</div>
           : <EmptyResults searching={false} label="推文" />)}
+        {!detailPosts && <ArchiveLoading label="正在加载作者推文" />}
         {detailPosts && <PageNav page={detailPage} total={detailPosts.total} onPage={(page) => { setDetailPage(page); detailScroll.current?.scrollTo(0, 0); }} />}
       </div>
     </div>}

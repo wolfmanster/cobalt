@@ -1,0 +1,308 @@
+/* Native tokens and surfaces stay scoped to the packaged Android client. */
+html[data-platform="android"] { color-scheme: light; background: #f6f8fa; scroll-padding-top: calc(106px + env(safe-area-inset-top, 0px)); }
+html[data-platform="android"] body { padding-bottom: 0; background: #f6f8fa; }
+.app-shell.is-native {
+  --ink: #17212b;
+  --muted: #657586;
+  --primary: #2386e8;
+  --primary-strong: #166dc5;
+  --primary-soft: #eaf3ff;
+  --surface: #fff;
+  --surface-high: #f6f8fb;
+  --outline: #e7ecf2;
+  --green: #21856a;
+  --green-soft: #e9f6f0;
+  --danger: #be3c46;
+  --danger-soft: #fff0f1;
+  --native-canvas: #f6f8fa;
+  --native-shadow: 0 4px 22px rgb(23 33 43 / 4%);
+  color: var(--ink);
+  color-scheme: light;
+  background: var(--native-canvas);
+  min-height: 100dvh;
+  padding-bottom: calc(94px + env(safe-area-inset-bottom, 0px));
+  font-size: 15px;
+  line-height: 1.5;
+}
+.is-native button { touch-action: manipulation; }
+.is-native button:focus-visible, .is-native input:focus-visible, .is-native textarea:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 3px;
+}
+.is-native button:disabled { cursor: default; }
+.is-native .page-footer { display: none; }
+.is-native .native-main { width: min(100%, 720px); margin: 0 auto; padding: 0; }
+.is-native .native-pages { width: 100%; }
+.is-native .native-page { display: none; }
+.is-native .native-page.is-current { display: block; }
+.is-native .native-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: calc(90px + env(safe-area-inset-top, 0px));
+  padding: calc(16px + env(safe-area-inset-top, 0px)) max(20px, calc((100vw - 680px) / 2)) 16px;
+  border-bottom: 1px solid var(--outline);
+  background: var(--surface);
+}
+.is-native .native-header-copy { min-width: 0; }
+.is-native .native-header.is-minimal { min-height: calc(52px + env(safe-area-inset-top, 0px)); padding-top: calc(12px + env(safe-area-inset-top, 0px)); padding-bottom: 12px; }
+.is-native .native-header.is-minimal p { margin: 0; }
+.is-native .native-header h1 { margin: 0; font-size: 24px; font-weight: 750; letter-spacing: -.04em; line-height: 1.25; }
+.is-native .native-header p { margin: 5px 0 0; color: var(--muted); font-size: 12px; }
+.is-native .native-header-actions { display: flex; flex: none; align-items: center; gap: 8px; }
+.is-native .native-icon-button { position: relative; display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border: 1px solid var(--outline); border-radius: 15px; color: var(--muted); background: var(--surface); cursor: pointer; }
+.is-native .native-account-button { color: var(--primary-strong); background: var(--primary-soft); border-color: transparent; }
+.is-native .native-account-dot { position: absolute; right: 7px; top: 7px; width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
+.is-native .native-service-dot { width: 6px; height: 6px; margin-right: 2px; border-radius: 50%; background: var(--green); }
+.is-native .native-service-dot.is-offline { background: var(--danger); }
+.is-native .native-service-dot.is-checking { background: var(--muted); animation: spin-pulse 1.4s ease-in-out infinite; }
+.is-native .native-service-warning { width: 100%; padding: 8px 12px; border-radius: 10px; color: var(--danger); background: var(--danger-soft); font-size: 12px; }
+
+.is-native .native-ingest-panel { margin: 20px 16px 0; padding: 20px; border: 1px solid var(--outline); border-radius: 24px; background: var(--surface); box-shadow: var(--native-shadow); }
+.is-native .panel-heading { margin-bottom: 18px; }
+.is-native .panel-heading > div:first-child { gap: 12px; }
+.is-native .panel-heading > div:first-child > span { width: 42px; height: 42px; border-radius: 14px; color: var(--primary); background: var(--primary-soft); box-shadow: none; }
+.is-native .panel-heading h2 { font-size: 18px; line-height: 1.4; letter-spacing: -.02em; }
+.is-native .panel-heading small { margin-top: 3px; color: var(--muted); font-size: 12px; }
+.is-native .composer { display: block; min-height: 0; border: 1px solid var(--outline); border-radius: 16px; background: var(--surface-high); }
+.is-native .composer:focus-within, .is-native .composer.is-dragging { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-soft); }
+.is-native .composer textarea { display: block; min-height: 86px; width: 100%; padding: 16px; resize: none; color: var(--ink); background: transparent; font-family: inherit; font-size: 14px; font-weight: 400; line-height: 1.7; outline: none; }
+.is-native .composer textarea::placeholder { color: var(--muted); font-weight: 400; }
+.is-native .native-composer-tools { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px 8px 8px; }
+.is-native .native-composer-tools button { display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 40px; padding: 0 10px; border: 0; border-radius: 10px; color: var(--muted); background: transparent; font-size: 12px; cursor: pointer; }
+.is-native .native-composer-tools button:active { color: var(--primary-strong); background: var(--primary-soft); }
+.is-native .submit-row { display: flex; flex-direction: column; align-items: stretch; gap: 12px; padding-top: 16px; }
+.is-native .input-count { display: flex; order: 0; justify-content: flex-start; color: var(--muted); font-size: 12px; }
+.is-native .input-count strong { color: var(--ink); font-size: 13px; }
+.is-native .input-count.has-links, .is-native .input-count.has-links strong { color: var(--primary-strong); }
+.is-native .primary-button { order: 1; min-height: 48px; padding: 0 20px; border-radius: 14px; font-size: 15px; font-weight: 650; color: #fff; background: var(--primary); box-shadow: none; }
+.is-native .primary-button:hover:not(:disabled) { transform: none; box-shadow: none; background: var(--primary-strong); }
+.is-native .primary-button:disabled { opacity: .5; }
+.is-native .native-composer-note { display: flex; align-items: center; justify-content: center; gap: 5px; margin: 14px 0 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
+.is-native .native-download-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 16px; }
+.is-native .native-download-stats > div { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border: 1px solid var(--outline); border-radius: 18px; background: var(--surface); }
+.is-native .native-stat-icon { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 12px; flex: none; color: var(--primary); background: var(--primary-soft); }
+.is-native .native-stat-icon.is-complete { color: var(--green); background: var(--green-soft); }
+.is-native .native-download-stats > div > span:last-child { display: flex; flex-direction: column; color: var(--muted); font-size: 12px; }
+.is-native .native-download-stats strong { margin-top: 2px; color: var(--ink); font-size: 22px; line-height: 1.2; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+.is-native .native-page .workspace { width: auto; max-width: none; margin: 26px 16px 24px; scroll-margin-top: calc(106px + env(safe-area-inset-top, 0px)); }
+.is-native .workspace-head { align-items: center; gap: 12px; margin-bottom: 16px; }
+.is-native .workspace-title > span { display: none; }
+.is-native .workspace-title h2 { margin: 0; color: var(--ink); font-size: 19px; font-weight: 700; letter-spacing: -.02em; }
+.is-native .workspace-title p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+.is-native .clear-button { min-height: 44px; padding: 0 12px; border-radius: 12px; color: var(--muted); background: var(--surface); border: 1px solid var(--outline); font-size: 12px; }
+.is-native .clear-button:active { color: var(--danger); background: var(--danger-soft); }
+.is-native .job-list { grid-template-columns: minmax(0, 1fr); gap: 12px; padding-top: 0; }
+.is-native .job-card { min-width: 0; border: 1px solid var(--outline); border-radius: 20px; background: var(--surface); box-shadow: none; }
+.is-native .job-card:hover { transform: none; border-color: var(--outline); background: var(--surface); }
+.is-native .job-card.is-active { border-color: var(--outline); }
+.is-native .job-main { padding: 16px; }
+.is-native .author-row { align-items: flex-start; }
+.is-native .avatar-wrap, .is-native .avatar { width: 40px; height: 40px; flex: none; }
+.is-native .avatar { border-radius: 50%; }
+.is-native .placeholder-avatar { color: var(--primary-strong); background: var(--primary-soft); }
+.is-native .author-copy { flex: 1; min-width: 0; margin-left: 12px; padding-top: 0; }
+.is-native .author-name { display: block; max-width: none; color: var(--ink); font-size: 15px; line-height: 1.4; overflow-wrap: anywhere; }
+.is-native .author-name span { display: block; margin: 2px 0 0; color: var(--muted); font-size: 12px; font-weight: 400; }
+.is-native .post-meta { gap: 6px; margin-top: 4px; color: var(--muted); font-family: inherit; font-size: 11px; font-weight: 400; }
+.is-native .post-meta span:not(.post-date) { display: none; }
+.is-native .post-text { max-width: none; margin: 14px 0 0 52px; color: var(--ink); font-size: 15px; font-weight: 400; line-height: 1.65; overflow-wrap: anywhere; }
+.is-native .status { min-height: 24px; padding: 0 7px; border-radius: 8px; font-size: 11px; font-weight: 500; }
+.is-native .status.active { color: var(--primary-strong); background: var(--primary-soft); }
+.is-native .status.success { color: var(--green); background: var(--green-soft); }
+.is-native .status.danger { color: var(--danger); background: var(--danger-soft); }
+.is-native .status.neutral { color: var(--muted); background: var(--surface-high); }
+.is-native .progress-block { margin: 18px 0 2px 52px; }
+.is-native .progress-copy { gap: 10px; color: var(--muted); font-size: 12px; }
+.is-native .progress-copy strong { flex: none; color: var(--primary-strong); }
+.is-native .progress-track { height: 4px; background: var(--primary-soft); }
+.is-native .progress-track > span { background: var(--primary); }
+.is-native .error-message { margin: 14px 0 0 52px; padding: 12px; border-radius: 12px; color: var(--danger); background: var(--danger-soft); font-size: 12px; }
+.is-native .job-footer { min-height: 48px; padding: 0 12px 0 16px; border-color: var(--outline); background: transparent; }
+.is-native .job-footer > span { color: var(--muted); font-size: 11px; }
+.is-native .text-button { min-height: 44px; font-size: 12px; color: var(--primary-strong); }
+.is-native .danger-text { color: var(--danger); }
+.is-native .empty-state { min-height: 240px; margin-top: 0; padding: 28px 20px; border: 1px solid var(--outline); border-radius: 20px; background: var(--surface); box-shadow: none; }
+.is-native .empty-state > span { width: 54px; height: 54px; border-radius: 18px; color: var(--primary); background: var(--primary-soft); }
+.is-native .empty-state h3 { margin-top: 16px; font-size: 16px; }
+.is-native .empty-state p { color: var(--muted); font-size: 13px; line-height: 1.6; }
+.is-native .empty-state button { min-height: 44px; border-radius: 12px; color: var(--primary-strong); background: var(--primary-soft); font-size: 13px; }
+
+.is-native .native-search-page { padding: 20px 16px 24px; }
+.is-native .archive-browser { max-width: none; padding-top: 0; }
+.is-native .archive-search { min-height: 52px; padding: 0 16px; border-color: var(--outline); border-radius: 16px; color: var(--muted); background: var(--surface); }
+.is-native .archive-search:focus-within { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-soft); }
+.is-native .archive-search input { color: var(--ink); font-size: 14px; outline: none; }
+.is-native .archive-search button { width: 40px; height: 40px; color: var(--muted); background: var(--surface-high); }
+.is-native .archive-empty { margin-top: 16px; padding: 32px 20px; border: 1px solid var(--outline); border-radius: 18px; color: var(--muted); background: var(--surface); font-size: 13px; line-height: 1.7; }
+.is-native .archive-result-section { margin-top: 22px; }
+.is-native .archive-result-section h3 { color: var(--ink); font-size: 16px; }
+.is-native .archive-result-count { color: var(--muted); font-size: 12px; }
+.is-native .archive-loading { overflow: hidden; margin-top: 12px; padding: 8px 16px; border: 1px solid var(--outline); border-radius: 18px; background: var(--surface); }
+.is-native .archive-skeleton-row { display: flex; align-items: center; gap: 12px; min-height: 72px; }
+.is-native .archive-skeleton-avatar { width: 40px; height: 40px; flex: none; border-radius: 50%; background: var(--surface-high); }
+.is-native .archive-skeleton-copy { display: grid; gap: 8px; width: 70%; }
+.is-native .archive-skeleton-copy i { display: block; height: 10px; width: 90%; border-radius: 6px; background: var(--surface-high); }
+.is-native .archive-skeleton-copy i:last-child { width: 55%; }
+.is-native .archive-skeleton-row { animation: spin-pulse 1.4s ease-in-out infinite; }
+.is-native .archive-view-tabs { max-width: none; margin-top: 18px; margin-bottom: 16px; padding: 4px; gap: 4px; border: 1px solid var(--outline); border-radius: 14px; background: var(--surface-high); }
+.is-native .archive-view-tabs button { min-height: 44px; border-radius: 10px; color: var(--muted); font-size: 14px; font-weight: 500; }
+.is-native .archive-view-tabs button.selected { color: var(--primary-strong); background: var(--surface); box-shadow: var(--native-shadow); }
+.is-native .archive-view-tabs button.selected::after { display: none; }
+.is-native .history-post-list, .is-native .archive-post-list { max-width: none; padding-top: 0; gap: 0; overflow: hidden; border: 1px solid var(--outline); border-radius: 20px; background: var(--surface); }
+.is-native .job-card.is-history-post { overflow: hidden; border: 0; border-bottom: 1px solid var(--outline); border-radius: 0; background: var(--surface); }
+.is-native .job-card.is-history-post:last-child { border-bottom: 0; }
+.is-native .archive-post-list > div:last-child .job-card { border-bottom: 0; }
+.is-native .job-card.is-history-post .job-main { padding: 16px 16px 8px; }
+.is-native .job-card.is-history-post .author-name { color: var(--ink); font-size: 15px; }
+.is-native .job-card.is-history-post .author-name span { display: block; margin-left: 0; color: var(--muted); font-size: 12px; }
+.is-native .job-card.is-history-post .post-meta { color: var(--muted); }
+.is-native .job-card.is-history-post .post-text { margin-left: 52px; color: var(--ink); font-size: 15px; line-height: 1.65; }
+.is-native .job-card.is-history-post .history-open-media { width: 44px; height: 44px; margin-left: 8px; border-radius: 14px; color: var(--muted); background: var(--surface-high); }
+.is-native .job-card.is-history-post .history-open-media:active { color: var(--primary-strong); background: var(--primary-soft); }
+.is-native .job-card.is-history-post .job-footer { padding-left: 68px; }
+.is-native .archive-author-list { max-width: none; gap: 0; overflow: hidden; border: 1px solid var(--outline); border-radius: 18px; background: var(--surface); }
+.is-native .archive-author { min-height: 80px; gap: 12px; padding: 16px; border: 0; border-bottom: 1px solid var(--outline); border-radius: 0; color: var(--ink); background: var(--surface); }
+.is-native .archive-author:last-child { border-bottom: 0; }
+.is-native .archive-author:hover { border-color: var(--outline); background: var(--surface-high); }
+.is-native .archive-avatar { width: 44px; height: 44px; flex-basis: 44px; border-radius: 50%; }
+.is-native .archive-avatar-fallback { color: var(--primary-strong); background: var(--primary-soft); }
+.is-native .archive-author-main strong { color: var(--ink); font-size: 15px; }
+.is-native .archive-author-main small, .is-native .archive-author-stats small { color: var(--muted); font-size: 12px; }
+.is-native .archive-detail-screen { background: var(--native-canvas); }
+.is-native .archive-detail-header { min-height: calc(72px + env(safe-area-inset-top, 0px)); padding: calc(12px + env(safe-area-inset-top, 0px)) 16px 12px; border-color: var(--outline); color: var(--ink); background: var(--surface); }
+.is-native .archive-back { width: 44px; height: 44px; border-radius: 14px; color: var(--primary-strong); background: var(--primary-soft); }
+.is-native .archive-detail-body { width: min(100% - 32px, 688px); max-width: none; padding-top: 24px; }
+.is-native .archive-detail-profile h2 { color: var(--ink); }
+.is-native .archive-detail-profile p { color: var(--muted); }
+.is-native .history-pagination { gap: 12px; margin-top: 20px; color: var(--muted); }
+.is-native .history-pagination button { min-height: 44px; border-color: var(--outline); border-radius: 12px; color: var(--primary-strong); background: var(--surface); font-size: 12px; }
+.is-native .history-pagination span { color: var(--muted); font-size: 12px; }
+
+.is-native .native-navigation { position: fixed; inset: auto 0 0; z-index: 30; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); height: calc(78px + env(safe-area-inset-bottom, 0px)); padding: 6px max(8px, calc((100vw - 680px) / 2)) calc(6px + env(safe-area-inset-bottom, 0px)); border-top: 1px solid var(--outline); background: var(--surface); }
+.is-native .native-navigation button { position: relative; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 6px; min-width: 0; border: 0; border-radius: 16px; color: var(--muted); background: transparent; font-size: 11px; font-weight: 500; cursor: pointer; }
+.is-native .native-navigation button svg { position: relative; z-index: 1; }
+.is-native .native-navigation button.selected { color: var(--primary-strong); font-weight: 650; }
+.is-native .native-navigation button.selected::before { content: ''; position: absolute; top: 6px; width: 54px; height: 30px; border-radius: 12px; background: var(--primary-soft); }
+.is-native .native-navigation .native-compose-action { color: var(--primary-strong); }
+.is-native .native-navigation .native-compose-action svg { padding: 6px; box-sizing: content-box; margin: -6px 0; border-radius: 11px; color: #fff; background: var(--primary); }
+.is-native .toast { bottom: calc(94px + env(safe-area-inset-bottom, 0px)); max-width: calc(100% - 32px); padding: 12px 18px; border: 1px solid var(--outline); border-radius: 14px; color: var(--ink); background: var(--surface); font-size: 13px; box-shadow: 0 8px 32px rgb(0 0 0 / 12%); }
+.is-native .auth-session-panel { margin: 16px; padding: 18px; border: 1px solid var(--outline); border-radius: 20px; flex-wrap: wrap; color: var(--ink); background: var(--surface); box-shadow: var(--native-shadow); }
+.is-native .auth-session-icon { width: 40px; height: 40px; border-radius: 14px; color: var(--primary-strong); background: var(--primary-soft); }
+.is-native .auth-session-copy { width: calc(100% - 54px); }
+.is-native .auth-session-copy strong { color: var(--ink); font-size: 15px; }
+.is-native .auth-session-copy small { color: var(--muted); font-size: 12px; line-height: 1.7; }
+.is-native .auth-session-actions { width: 100%; margin-left: 54px; }
+.is-native .auth-login-button { min-height: 44px; border-radius: 12px; color: #fff; background: var(--primary); font-size: 13px; }
+.is-native .danger-outline-button { min-height: 44px; border-color: var(--outline); border-radius: 12px; color: var(--danger); background: var(--danger-soft); font-size: 13px; }
+.is-native .auth-close-button { min-width: 44px; height: 44px; color: var(--muted); }
+.is-native .confirmation-backdrop { z-index: 90; background: rgb(10 20 32 / 40%); }
+.is-native .confirmation-dialog { padding: 24px; border-color: var(--outline); border-radius: 24px; color: var(--ink); background: var(--surface); }
+.is-native .confirmation-dialog:focus { outline: none; }
+.is-native .confirmation-dialog h2 { font-size: 21px; }
+.is-native .confirmation-dialog p { color: var(--muted); font-size: 13px; }
+.is-native .confirmation-actions button { min-height: 44px; border: 1px solid var(--outline); border-radius: 12px; color: var(--ink); background: var(--surface-high); font-size: 13px; }
+.is-native .confirmation-actions .confirmation-danger { border-color: transparent; color: #fff; background: var(--danger); }
+.is-native .confirmation-actions .confirmation-primary { border-color: transparent; color: #fff; background: var(--primary); }
+.is-native .folder-path-label { display: block; margin-top: 20px; color: var(--muted); font-size: 12px; }
+.is-native input.folder-path-input { width: 100%; margin-top: 8px; padding: 12px; border: 1px solid var(--outline); border-radius: 12px; color: var(--ink); background: var(--surface-high); font-size: 14px; }
+.is-native .folder-picker-button { min-height: 44px; margin-top: 12px; padding: 0; border: 0; color: var(--primary-strong); background: transparent; font-size: 13px; cursor: pointer; }
+
+@media (max-width: 360px) {
+  .is-native .native-header { padding-left: 16px; padding-right: 16px; }
+  .is-native .native-header h1 { font-size: 22px; }
+  .is-native .native-header p { font-size: 11px; }
+  .is-native .native-header-actions { gap: 4px; }
+  .is-native .native-ingest-panel { margin-left: 12px; margin-right: 12px; padding: 16px; }
+  .is-native .panel-heading small { font-size: 11px; }
+  .is-native .native-download-stats { margin-left: 12px; margin-right: 12px; gap: 8px; }
+  .is-native .native-download-stats > div { gap: 8px; padding: 12px; }
+  .is-native .native-page .workspace { margin-left: 12px; margin-right: 12px; }
+  .is-native .native-search-page { padding-left: 12px; padding-right: 12px; }
+  .is-native .archive-author-stats { display: none; }
+}
+@media (prefers-color-scheme: dark) {
+  html[data-platform="android"], html[data-platform="android"] body { color-scheme: dark; background: #101821; }
+  .app-shell.is-native {
+    --ink: #e6edf5;
+    --muted: #9aaabb;
+    --primary: #67adff;
+    --primary-strong: #8ec2ff;
+    --primary-soft: #1b324c;
+    --surface: #17212c;
+    --surface-high: #1e2b39;
+    --outline: #2b3a49;
+    --green: #74cfac;
+    --green-soft: #1b3832;
+    --danger: #ff929c;
+    --danger-soft: #3d252f;
+    --native-canvas: #101821;
+    --native-shadow: none;
+    color-scheme: dark;
+  }
+  .is-native .primary-button, .is-native .auth-login-button, .is-native .confirmation-actions .confirmation-primary, .is-native .native-navigation .native-compose-action svg { color: #102033; }
+  .is-native .confirmation-actions .confirmation-danger { color: #35151d; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .is-native *, .is-native *::before, .is-native *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}
+@keyframes spin-pulse { 50% { opacity: .35; } }
+
+/* Android media layout: equal heights, natural proportions and per-post dots. */
+.is-native .media-carousel { --media-height: clamp(220px, 65vw, 320px); --media-inset: 56px; position: relative; min-width: 0; margin: 18px 0 0; }
+.is-native .media-viewport { height: var(--media-height); overflow-x: auto; overflow-y: hidden; border: 0; border-radius: 0; background: transparent; scroll-snap-type: x proximity; scroll-padding-inline-start: var(--media-inset); scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+.is-native .media-viewport::-webkit-scrollbar { display: none; }
+.is-native .media-track { display: flex; gap: 4px; box-sizing: border-box; width: max-content; min-width: 100%; height: 100%; padding: 0 16px 0 var(--media-inset); }
+.is-native .media-tile { position: relative; flex: none; width: auto; height: 100%; min-width: 0; overflow: hidden; border: 0; border-radius: 12px; background: transparent; scroll-snap-align: start; }
+.is-native .media-play-badge { position: absolute; inset: 50% auto auto 50%; transform: translate(-50%, -50%); display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; color: #fff; background: rgb(0 0 0 / 40%); pointer-events: none; }
+.is-native .media-open-preview { display: block; width: 100%; height: 100%; padding: 0; border: 0; background: transparent; cursor: pointer; }
+.is-native .media-open-preview:focus-visible { outline: 2px solid var(--primary); outline-offset: -3px; }
+.is-native .media-tile > img, .is-native .media-tile > video, .is-native .media-open-preview > img, .is-native .media-open-preview > video { width: 100%; height: 100%; display: block; object-fit: contain; background: transparent; }
+.is-native .media-caption { min-height: 40px; margin-left: var(--media-inset); border-top: 0; background: var(--surface); }
+.is-native .media-carousel.is-single .media-viewport { height: auto; overflow: hidden; }
+.is-native .media-carousel.is-single .media-track { width: 100%; min-width: 0; height: auto; padding-right: 0; }
+.is-native .media-carousel.is-single .media-tile { width: auto; height: auto; max-width: 100%; }
+.is-native .media-carousel.is-single .media-open-preview { width: auto; height: auto; max-width: 100%; }
+.is-native .media-carousel.is-single .media-tile > img,
+.is-native .media-carousel.is-single .media-tile > video,
+.is-native .media-carousel.is-single .media-open-preview > img,
+.is-native .media-carousel.is-single .media-open-preview > video { width: auto; height: auto; max-width: 100%; max-height: var(--media-height); }
+.is-native .media-pagination { position: relative; display: flex; align-items: center; justify-content: center; gap: 2px; min-height: 36px; padding: 4px 32px; }
+.is-native .media-pagination button { position: relative; width: 24px; height: 28px; padding: 0; border: 0; border-radius: 8px; background: transparent; cursor: pointer; }
+.is-native .media-pagination button::after { content: ''; position: absolute; top: 11px; left: 9px; width: 6px; height: 6px; border-radius: 999px; background: var(--muted); opacity: .5; transition: width .16s ease, left .16s ease, background-color .16s ease; }
+.is-native .media-pagination button.is-active { background: transparent; }
+.is-native .media-pagination button.is-active::after { left: 4px; width: 16px; opacity: 1; background: var(--primary); }
+.is-native .media-pagination button:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
+.is-native .media-counter { position: absolute; right: 0; bottom: 10px; color: var(--muted); font-size: 11px; }
+.is-native .job-card.is-history-post .media-carousel { --media-inset: 52px; margin-top: 12px; }
+.is-native .job-card.is-history-post .media-tile { border: 0; }
+.is-native .confirmation-dialog, .is-native .folder-dialog { color: var(--ink); background: var(--surface); }
+.is-native .history-media-viewer {
+  position: fixed;
+  z-index: 1000;
+  inset: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  color: #fff;
+  background: #050505;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+}
+.is-native .history-media-viewer-header { display: flex; align-items: center; justify-content: space-between; }
+.is-native .history-media-viewer-header { min-height: 56px; padding: calc(8px + env(safe-area-inset-top, 0px)) 16px 8px; color: #fff; font-size: 14px; }
+.is-native .history-media-viewer-close { width: 44px; height: 44px; padding: 0; border: 0; border-radius: 50%; display: grid; place-items: center; color: #fff; background: rgba(255, 255, 255, .16); cursor: pointer; }
+.is-native .history-media-viewer-header-spacer { width: 44px; }
+.is-native .history-media-viewer-stage { min-width: 0; min-height: 0; overflow: hidden; touch-action: pan-y; }
+.is-native .history-media-viewer-track { display: flex; width: 300%; height: 100%; will-change: transform; }
+.is-native .history-media-viewer-track.is-settling { transition: transform 220ms ease-out; }
+.is-native .history-media-viewer-slide { flex: 0 0 33.333333%; width: 33.333333%; min-width: 0; height: 100%; display: flex; align-items: center; justify-content: center; }
+.is-native .history-media-viewer-slide > img,
+.is-native .history-media-viewer-slide > video { width: 100%; height: 100%; max-width: 100%; max-height: 100%; display: block; object-fit: contain; background: transparent; }
+.is-native .history-media-viewer-pagination { align-self: center; transform: translateY(-16px); }

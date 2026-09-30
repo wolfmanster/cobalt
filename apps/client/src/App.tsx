@@ -6,8 +6,6 @@ import {
   Archive,
   ArrowDownToLine,
   Check,
-  ChevronLeft,
-  ChevronRight,
   CircleAlert,
   Clock3,
   FileText,
@@ -95,6 +93,30 @@ function MediaPreview({ media, onAspectRatio, controls = true, loading = 'lazy' 
       }}
     />
   );
+}
+
+function MediaPagination({ media, activeIndex, ariaLabel, unit, onSelect }: {
+  media: MediaItem[];
+  activeIndex: number;
+  ariaLabel: string;
+  unit: string;
+  onSelect: (index: number) => void;
+}) {
+  const maxDots = 7;
+  const firstDot = Math.max(0, Math.min(activeIndex - Math.floor(maxDots / 2), media.length - maxDots));
+  return <nav className="media-pagination" role="group" aria-label={ariaLabel}>
+    {media.slice(firstDot, firstDot + maxDots).map((item, offset) => {
+      const index = firstDot + offset;
+      return <button
+        key={item.id}
+        type="button"
+        className={index === activeIndex ? 'is-active' : ''}
+        aria-label={`查看第 ${index + 1}${unit}，共 ${media.length}${unit}`}
+        aria-current={index === activeIndex ? 'true' : undefined}
+        onClick={() => onSelect(index)}
+      />;
+    })}
+  </nav>;
 }
 
 function JobCard({ job, onAction, onOpenMedia, onPreviewMedia, presentation = 'queue' }: { job: DownloadJob; onAction: (action: 'cancel' | 'retry', id: string) => void; onOpenMedia: (id: string) => void; onPreviewMedia: (media: MediaItem[], index: number) => void; presentation?: 'queue' | 'history' }) {
@@ -241,16 +263,7 @@ function JobCard({ job, onAction, onOpenMedia, onPreviewMedia, presentation = 'q
               <span>{activeMedia.kind === 'video' ? <Video size={13} /> : <ImageIcon size={13} />}{activeMedia.filename}</span>
               <button type="button" title={`打开 ${activeMedia.filename}`} aria-label={`打开 ${activeMedia.filename}`} onClick={() => onOpenMedia(activeMedia.id)}><FolderOpen size={15} /></button>
             </div>}
-            {job.media.length > 1 && <div className="media-pagination" role="group" aria-label="选择此推文的媒体文件">
-              {(() => {
-                const maxDots = 7;
-                const firstDot = Math.max(0, Math.min(activeMediaIndex - Math.floor(maxDots / 2), job.media.length - maxDots));
-                return job.media.slice(firstDot, firstDot + maxDots).map((media, offset) => {
-                  const index = firstDot + offset;
-                  return <button key={media.id} type="button" className={index === activeMediaIndex ? 'is-active' : ''} aria-label={`查看第 ${index + 1} 个文件，共 ${job.media.length} 个`} aria-current={index === activeMediaIndex ? 'true' : undefined} onClick={() => showMedia(index)} />;
-                });
-              })()}
-            </div>}
+            {job.media.length > 1 && <MediaPagination media={job.media} activeIndex={activeMediaIndex} ariaLabel="选择此推文的媒体文件" unit="个文件" onSelect={showMedia} />}
             {job.media.length > 1 && <span className="media-counter" aria-live="polite">{activeMediaIndex + 1} / {job.media.length}</span>}
           </div>
         )}
@@ -277,6 +290,7 @@ export default function App() {
   const [tab, setTab] = useState<'queue' | 'history' | 'search'>('queue');
   const [historyView, setHistoryView] = useState<'all' | 'authors'>('all');
   const [historyPreview, setHistoryPreview] = useState<{ media: MediaItem[]; index: number } | null>(null);
+  const [historyPreviewDrag, setHistoryPreviewDrag] = useState({ offsetX: 0, animating: false });
   const [archiveRevision, setArchiveRevision] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -294,12 +308,16 @@ export default function App() {
   const [sessionBusy, setSessionBusy] = useState(false);
   const archiveBackHandler = useRef<(() => boolean) | null>(null);
   const historyPreviewRef = useRef<{ media: MediaItem[]; index: number } | null>(null);
+  const historyPreviewDragRef = useRef({ offsetX: 0, animating: false });
+  const historyPreviewStageRef = useRef<HTMLDivElement | null>(null);
+  const historyPreviewPendingIndex = useRef<number | null>(null);
+  const historyPreviewTransitionTimer = useRef<number | null>(null);
   const historyPreviewScrollY = useRef<number | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const handledSharedLinks = useRef(new Set<string>());
   const historyPageRef = useRef(0);
-  const historyPreviewTouch = useRef<{ x: number; y: number; edge: boolean } | null>(null);
+  const historyPreviewTouch = useRef<{ x: number; y: number; edge: boolean; axis: 'horizontal' | 'vertical' | null } | null>(null);
   const previousHistoryTotal = useRef<number | null>(null);
   const previousTab = useRef(tab);
   const [searchQuery, setSearchQuery] = useState('');
@@ -310,49 +328,142 @@ export default function App() {
     archiveBackHandler.current = handler;
   }, []);
 
+  function updateHistoryPreviewDrag(next: { offsetX: number; animating: boolean }) {
+    historyPreviewDragRef.current = next;
+    setHistoryPreviewDrag(next);
+  }
+
+  function clearHistoryPreviewTransitionTimer() {
+    if (historyPreviewTransitionTimer.current !== null) {
+      window.clearTimeout(historyPreviewTransitionTimer.current);
+      historyPreviewTransitionTimer.current = null;
+    }
+  }
+
+  function finishHistoryPreviewTransition() {
+    clearHistoryPreviewTransitionTimer();
+    const targetIndex = historyPreviewPendingIndex.current;
+    const current = historyPreviewRef.current;
+    if (targetIndex !== null && current) {
+      const next = { ...current, index: targetIndex };
+      historyPreviewRef.current = next;
+      setHistoryPreview(next);
+    }
+    historyPreviewPendingIndex.current = null;
+    updateHistoryPreviewDrag({ offsetX: 0, animating: false });
+  }
+
+  function settleHistoryPreviewTrack(targetIndex: number | null, offsetX: number) {
+    clearHistoryPreviewTransitionTimer();
+    historyPreviewPendingIndex.current = targetIndex;
+    updateHistoryPreviewDrag({ offsetX, animating: true });
+    historyPreviewTransitionTimer.current = window.setTimeout(finishHistoryPreviewTransition, 260);
+  }
+
   function previewHistoryMedia(media: MediaItem[], index: number) {
     const next = { media, index };
+    clearHistoryPreviewTransitionTimer();
+    historyPreviewPendingIndex.current = null;
+    historyPreviewTouch.current = null;
+    updateHistoryPreviewDrag({ offsetX: 0, animating: false });
     historyPreviewScrollY.current = window.scrollY;
     historyPreviewRef.current = next;
     setHistoryPreview(next);
   }
 
   function closeHistoryPreview() {
+    clearHistoryPreviewTransitionTimer();
+    historyPreviewPendingIndex.current = null;
+    historyPreviewTouch.current = null;
+    updateHistoryPreviewDrag({ offsetX: 0, animating: false });
     historyPreviewRef.current = null;
     setHistoryPreview(null);
   }
 
-  function stepHistoryPreview(delta: number) {
+  function selectHistoryPreview(index: number) {
     const current = historyPreviewRef.current;
     if (!current) return;
+    clearHistoryPreviewTransitionTimer();
+    historyPreviewPendingIndex.current = null;
+    historyPreviewTouch.current = null;
     const next = {
       ...current,
-      index: Math.max(0, Math.min(current.media.length - 1, current.index + delta)),
+      index: Math.max(0, Math.min(current.media.length - 1, index)),
     };
+    updateHistoryPreviewDrag({ offsetX: 0, animating: false });
     historyPreviewRef.current = next;
     setHistoryPreview(next);
   }
 
-  function startHistoryPreviewSwipe(event: TouchEvent<HTMLDivElement>) {
+  function startHistoryPreviewSwipe(event: TouchEvent<HTMLElement>) {
+    if (historyPreviewDragRef.current.animating) return;
     const touch = event.touches[0];
     if (!touch) return;
     historyPreviewTouch.current = {
       x: touch.clientX,
       y: touch.clientY,
       edge: touch.clientX <= 24 || touch.clientX >= window.innerWidth - 24,
+      axis: null,
     };
   }
 
-  function finishHistoryPreviewSwipe(event: TouchEvent<HTMLDivElement>) {
+  function moveHistoryPreviewSwipe(event: TouchEvent<HTMLElement>) {
+    const start = historyPreviewTouch.current;
+    const touch = event.touches[0];
+    const current = historyPreviewRef.current;
+    if (!start || start.edge || !touch || !current || current.media.length < 2 || historyPreviewDragRef.current.animating) return;
+    const deltaX = touch.clientX - start.x;
+    const deltaY = touch.clientY - start.y;
+    if (Math.abs(deltaX) < 8) return;
+    if (Math.abs(deltaX) < Math.abs(deltaY) * 1.25) {
+      start.axis = 'vertical';
+      return;
+    }
+    start.axis = 'horizontal';
+    const hasNeighbor = deltaX < 0 ? current.index < current.media.length - 1 : current.index > 0;
+    const offsetX = hasNeighbor ? deltaX : Math.sign(deltaX) * Math.min(Math.abs(deltaX) * 0.22, 72);
+    updateHistoryPreviewDrag({ offsetX, animating: false });
+  }
+
+  function finishHistoryPreviewSwipe(event: TouchEvent<HTMLElement>) {
     const start = historyPreviewTouch.current;
     historyPreviewTouch.current = null;
     const touch = event.changedTouches[0];
     const current = historyPreviewRef.current;
-    if (!start || start.edge || !touch || !current || current.media.length < 2) return;
+    if (!start) return;
+    if (start.edge || !current || current.media.length < 2) {
+      updateHistoryPreviewDrag({ offsetX: 0, animating: false });
+      return;
+    }
+    if (!touch) {
+      settleHistoryPreviewTrack(null, 0);
+      return;
+    }
     const deltaX = touch.clientX - start.x;
     const deltaY = touch.clientY - start.y;
-    if (Math.abs(deltaX) < 48 || Math.abs(deltaX) < Math.abs(deltaY) * 1.25) return;
-    stepHistoryPreview(deltaX > 0 ? 1 : -1);
+    if (start.axis !== 'horizontal' || Math.abs(deltaX) < 48 || Math.abs(deltaX) < Math.abs(deltaY) * 1.25) {
+      if (historyPreviewDragRef.current.offsetX !== 0) settleHistoryPreviewTrack(null, 0);
+      else updateHistoryPreviewDrag({ offsetX: 0, animating: false });
+      return;
+    }
+    const direction = deltaX < 0 ? 1 : -1;
+    const targetIndex = Math.max(0, Math.min(current.media.length - 1, current.index + direction));
+    if (targetIndex === current.index) {
+      settleHistoryPreviewTrack(null, 0);
+      return;
+    }
+    const stage = historyPreviewStageRef.current;
+    const stageStyles = stage ? window.getComputedStyle(stage) : null;
+    const stageWidth = stage
+      ? stage.clientWidth - Number.parseFloat(stageStyles?.paddingLeft ?? '0') - Number.parseFloat(stageStyles?.paddingRight ?? '0')
+      : window.innerWidth;
+    settleHistoryPreviewTrack(targetIndex, direction > 0 ? -stageWidth : stageWidth);
+  }
+
+  function cancelHistoryPreviewSwipe() {
+    const start = historyPreviewTouch.current;
+    historyPreviewTouch.current = null;
+    if (start && !start.edge) settleHistoryPreviewTrack(null, 0);
   }
 
   const loadJobs = useMemo(() => createJobRefresh(listJobs, HISTORY_PAGE_SIZE, (result, page) => {
@@ -400,6 +511,12 @@ export default function App() {
     setNotice(`已接收 ${sharedUrls.length} 条 X 链接，准备下载`);
     await submitUrls(sharedUrls);
   }, [submitUrls]);
+
+  useEffect(() => () => {
+    if (historyPreviewTransitionTimer.current !== null) {
+      window.clearTimeout(historyPreviewTransitionTimer.current);
+    }
+  }, []);
 
   useEffect(() => {
     void refreshJobs().catch((error) => setNotice(error.message));
@@ -862,21 +979,32 @@ export default function App() {
         )}
       </main>
 
-      {xLoginSupported && historyPreview && historyPreview.media[historyPreview.index] && <section className="history-media-viewer" role="dialog" aria-modal="true" aria-label={`媒体预览：${historyPreview.media[historyPreview.index].filename}`}>
+      {xLoginSupported && historyPreview && historyPreview.media[historyPreview.index] && <section className="history-media-viewer" role="dialog" aria-modal="true" aria-label={`媒体预览：${historyPreview.media[historyPreview.index].filename}`} onTouchStart={startHistoryPreviewSwipe} onTouchMove={moveHistoryPreviewSwipe} onTouchEnd={finishHistoryPreviewSwipe} onTouchCancel={cancelHistoryPreviewSwipe}>
         <header className="history-media-viewer-header">
           <button type="button" className="history-media-viewer-close" onClick={closeHistoryPreview} aria-label="返回历史记录"><X size={24} /></button>
           <span>{historyPreview.index + 1} / {historyPreview.media.length}</span>
           <span className="history-media-viewer-header-spacer" aria-hidden="true" />
         </header>
-        <div className="history-media-viewer-stage" onTouchStart={startHistoryPreviewSwipe} onTouchEnd={finishHistoryPreviewSwipe} onTouchCancel={() => { historyPreviewTouch.current = null; }}>
-          {historyPreview.index > 0 && <button type="button" className="history-media-viewer-arrow previous" onClick={() => stepHistoryPreview(-1)} aria-label="查看上一个媒体"><ChevronLeft size={30} /></button>}
-          <MediaPreview key={historyPreview.media[historyPreview.index].id} media={historyPreview.media[historyPreview.index]} controls loading="eager" />
-          {historyPreview.index < historyPreview.media.length - 1 && <button type="button" className="history-media-viewer-arrow next" onClick={() => stepHistoryPreview(1)} aria-label="查看下一个媒体"><ChevronRight size={30} /></button>}
+        <div className="history-media-viewer-stage" ref={historyPreviewStageRef}>
+          <div
+            className={`history-media-viewer-track ${historyPreviewDrag.animating ? 'is-settling' : ''}`}
+            style={{ transform: `translate3d(calc(-33.333333% + ${historyPreviewDrag.offsetX}px), 0, 0)` }}
+            onTransitionEnd={(event) => {
+              if (event.target === event.currentTarget && event.propertyName === 'transform') finishHistoryPreviewTransition();
+            }}
+          >
+            {[-1, 0, 1].map((relativeIndex) => {
+              const mediaIndex = historyPreview.index + relativeIndex;
+              const media = historyPreview.media[mediaIndex];
+              return <div className="history-media-viewer-slide" key={media?.id ?? `empty-${relativeIndex}`} aria-hidden={relativeIndex === 0 ? undefined : true}>
+                {media && <MediaPreview key={media.id} media={media} controls={relativeIndex === 0} loading="eager" />}
+              </div>;
+            })}
+          </div>
         </div>
-        <footer className="history-media-viewer-footer">
-          <span>{historyPreview.media[historyPreview.index].filename}</span>
-          {historyPreview.media.length > 1 && <small>向右滑动查看下一个</small>}
-        </footer>
+        {historyPreview.media.length > 1 && <div className="history-media-viewer-pagination">
+          <MediaPagination media={historyPreview.media} activeIndex={historyPreview.index} ariaLabel="选择推文媒体" unit="个媒体" onSelect={selectHistoryPreview} />
+        </div>}
       </section>}
 
       <footer className="page-footer"><span>媒体由本地服务解析与保存</span><span>{xLoginSupported && sessionConfigured ? 'X 会话经 Android Keystore 加密' : '公开帖子无需登录'}</span></footer>

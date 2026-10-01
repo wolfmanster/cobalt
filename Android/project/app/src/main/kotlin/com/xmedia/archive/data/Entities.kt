@@ -1,6 +1,8 @@
 package com.xmedia.archive.data
 
 import androidx.room.Entity
+import androidx.room.ForeignKey
+import androidx.room.Index
 import androidx.room.PrimaryKey
 
 enum class JobStatus { QUEUED, RESOLVING, DOWNLOADING, COMPLETED, FAILED, CANCELED }
@@ -40,4 +42,28 @@ data class MediaEntity(
     val sourceUrl: String,
     val mediaStoreUri: String? = null,
     val position: Int = 0,
+)
+
+@Entity(tableName = "tweet_categories", indices = [Index(value = ["normalizedName"], unique = true)])
+data class TweetCategoryEntity(
+    @PrimaryKey val id: String,
+    val name: String,
+    val normalizedName: String,
+    val createdAt: String,
+)
+
+@Entity(
+    tableName = "tweet_category_assignments",
+    primaryKeys = ["tweetId", "categoryId"],
+    foreignKeys = [ForeignKey(
+        entity = TweetCategoryEntity::class,
+        parentColumns = ["id"],
+        childColumns = ["categoryId"],
+        onDelete = ForeignKey.CASCADE,
+    )],
+    indices = [Index("tweetId"), Index("categoryId")],
+)
+data class TweetCategoryAssignmentEntity(
+    val tweetId: String,
+    val categoryId: String,
 )

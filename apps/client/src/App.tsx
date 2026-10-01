@@ -1,299 +1,60 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type TouchEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createJobRefresh } from './jobRefresh';
 import { HistoryBrowser } from './HistoryBrowser';
-import { Capacitor } from '@capacitor/core';
+import { CategoryBrowser } from './CategoryBrowser';
+import { DownloadFolderDialog, ClearHistoryDialog } from './components/ArchiveDialogs';
+import { CategorySelectionBar } from './components/CategorySelectionBar';
+import { CategoryNameDialog, DeleteCategoryDialog, TweetCategoryDialog } from './components/TweetCategoryDialogs';
+import { LinkComposer } from './components/LinkComposer';
+import { SessionPanel } from './components/SessionPanel';
+import { NativeHeader, NativeNavigation, NativeDownloadStats } from './components/NativeShell';
+import { JobCard } from './components/JobCard';
+import { HistoryMediaViewer } from './components/HistoryMediaViewer';
+import { useMediaViewer } from './hooks/useMediaViewer';
+import { extractUrls } from './lib/format';
 import {
   Archive,
   ArrowDownToLine,
   Check,
   CircleAlert,
-  Clock3,
-  FileText,
   FolderCheck,
   FolderOpen,
   Home,
   History,
-  Image as ImageIcon,
   Link2,
   LoaderCircle,
   Pause,
-  RotateCcw,
   Search,
   ShieldCheck,
   Trash2,
-  Upload,
-  Video,
   X,
 } from 'lucide-react';
-import { cancelJob, clearHistory, clearXSession, consumeSharedContent, createJobs, getDownloadFolder, getHealth, getXSessionStatus, listJobs, openMedia, readClipboardText, retryJob, selectDownloadFolder, setDownloadPath, startXLogin, subscribeJobs, subscribeSharedContent, xLoginSupported } from './api';
-import type { DownloadJob, JobStatus, MediaItem } from './types';
+import { cancelJob, clearHistory, clearXSession, consumeSharedContent, createJobs, createTweetCategory, deleteTweetCategory, getDownloadFolder, getHealth, getXSessionStatus, listJobs, listTweetCategories, openMedia, readClipboardText, renameTweetCategory, retryJob, selectDownloadFolder, setDownloadPath, startXLogin, subscribeCategoryChanges, subscribeJobs, subscribeSharedContent, xLoginSupported } from './api';
+import type { DownloadJob } from './types';
+import type { TweetCategory } from './nativeArchive';
 
 const HISTORY_PAGE_SIZE = 25;
 
-const STATUS: Record<JobStatus, { label: string; className: string }> = {
-  queued: { label: '等待中', className: 'neutral' },
-  resolving: { label: '解析帖子', className: 'active' },
-  downloading: { label: '下载中', className: 'active' },
-  completed: { label: '已完成', className: 'success' },
-  failed: { label: '失败', className: 'danger' },
-  canceled: { label: '已取消', className: 'neutral' },
-};
-
-function extractUrls(text: string) {
-  return [...new Set((text.match(/https:\/\/[^\s,;"'<>]+/gi) ?? []).map((url) => url.replace(/[)\].，。！？]+$/u, '')))];
-}
-
-function formatBytes(bytes?: number) {
-  if (bytes === undefined) return '大小未知';
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
-}
-
-function formatDate(value?: string) {
-  if (!value) return '时间未知';
-  return new Intl.DateTimeFormat('zh-CN', {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(new Date(value));
-}
-
-function statusIcon(status: JobStatus) {
-  if (status === 'completed') return <Check size={13} />;
-  if (status === 'failed') return <CircleAlert size={13} />;
-  if (status === 'downloading' || status === 'resolving') return <LoaderCircle className="spin" size={13} />;
-  return <Clock3 size={13} />;
-}
-
-function revealVideoPreview(video: HTMLVideoElement) {
-  if (video.currentTime > 0 || !Number.isFinite(video.duration) || video.duration <= 0) return;
-  video.currentTime = Math.min(0.05, video.duration / 2);
-}
-
-function MediaPreview({ media, onAspectRatio, controls = true, loading = 'lazy' }: { media: MediaItem; onAspectRatio?: (ratio: number) => void; controls?: boolean; loading?: 'lazy' | 'eager' }) {
-  const previewUrl = Capacitor.convertFileSrc(media.previewUrl);
-  if (media.kind === 'image' || media.kind === 'gif') {
-    return <img src={previewUrl} alt={media.filename} loading={loading} onLoad={(event) => {
-      const image = event.currentTarget;
-      if (image.naturalWidth && image.naturalHeight) onAspectRatio?.(image.naturalWidth / image.naturalHeight);
-    }} />;
-  }
-  return (
-    <video
-      src={previewUrl}
-      controls={controls}
-      playsInline
-      preload="metadata"
-      onLoadedMetadata={(event) => {
-        const video = event.currentTarget;
-        revealVideoPreview(video);
-        if (video.videoWidth && video.videoHeight) onAspectRatio?.(video.videoWidth / video.videoHeight);
-      }}
-    />
-  );
-}
-
-function MediaPagination({ media, activeIndex, ariaLabel, unit, onSelect }: {
-  media: MediaItem[];
-  activeIndex: number;
-  ariaLabel: string;
-  unit: string;
-  onSelect: (index: number) => void;
-}) {
-  const maxDots = 7;
-  const firstDot = Math.max(0, Math.min(activeIndex - Math.floor(maxDots / 2), media.length - maxDots));
-  return <nav className="media-pagination" role="group" aria-label={ariaLabel}>
-    {media.slice(firstDot, firstDot + maxDots).map((item, offset) => {
-      const index = firstDot + offset;
-      return <button
-        key={item.id}
-        type="button"
-        className={index === activeIndex ? 'is-active' : ''}
-        aria-label={`查看第 ${index + 1}${unit}，共 ${media.length}${unit}`}
-        aria-current={index === activeIndex ? 'true' : undefined}
-        onClick={() => onSelect(index)}
-      />;
-    })}
-  </nav>;
-}
-
-function JobCard({ job, onAction, onOpenMedia, onPreviewMedia, presentation = 'queue' }: { job: DownloadJob; onAction: (action: 'cancel' | 'retry', id: string) => void; onOpenMedia: (id: string) => void; onPreviewMedia: (media: MediaItem[], index: number) => void; presentation?: 'queue' | 'history' }) {
-  const [avatarFailed, setAvatarFailed] = useState(false);
-  const [activeMediaIndex, setActiveMediaIndex] = useState(0);
-  const [mediaAspectRatios, setMediaAspectRatios] = useState<Record<string, number>>({});
-  const touchStartX = useRef<number | null>(null);
-  const mediaViewportRef = useRef<HTMLDivElement | null>(null);
-  const mediaTileRefs = useRef<(HTMLDivElement | null)[]>([]);
-  useEffect(() => setAvatarFailed(false), [job.metadata?.avatarUrl]);
-  useEffect(() => setActiveMediaIndex(0), [job.id, job.media.map((media) => media.id).join('|')]);
-  const active = ['queued', 'resolving', 'downloading'].includes(job.status);
-  const complete = job.status === 'completed';
-  const historical = presentation === 'history';
-  const totalSize = job.media.reduce((sum, item) => sum + (item.size ?? 0), 0);
-  const activeMediaId = job.media[activeMediaIndex]?.id;
-  const activeMediaAspectRatio = activeMediaId ? mediaAspectRatios[activeMediaId] : undefined;
-  const activeMedia = job.media[activeMediaIndex];
-  const mediaInset = historical ? 52 : 56;
-
-  function showMedia(index: number) {
-    setActiveMediaIndex(index);
-    if (!xLoginSupported) return;
-    const viewport = mediaViewportRef.current;
-    const tile = mediaTileRefs.current[index];
-    if (!viewport || !tile) return;
-    const left = viewport.scrollLeft + tile.getBoundingClientRect().left - viewport.getBoundingClientRect().left - mediaInset;
-    viewport.scrollTo({ left, behavior: 'smooth' });
-  }
-
-  function updateActiveMedia() {
-    const viewport = mediaViewportRef.current;
-    if (!viewport || job.media.length < 2) return;
-    if (viewport.scrollWidth > viewport.clientWidth + 1 && viewport.scrollWidth - viewport.scrollLeft - viewport.clientWidth < 2) {
-      setActiveMediaIndex(job.media.length - 1);
-      return;
-    }
-    const bounds = viewport.getBoundingClientRect();
-    const targetLeft = bounds.left + mediaInset;
-    let nearest = 0;
-    let distance = Infinity;
-    mediaTileRefs.current.slice(0, job.media.length).forEach((tile, index) => {
-      if (!tile) return;
-      const rect = tile.getBoundingClientRect();
-      if (rect.right <= bounds.left || rect.left >= bounds.right) return;
-      const candidate = Math.abs(rect.left - targetLeft);
-      if (candidate < distance) {
-        nearest = index;
-        distance = candidate;
-      }
-    });
-    setActiveMediaIndex(nearest);
-  }
-
-  return (
-    <article className={`job-card ${active ? 'is-active' : ''} ${historical ? 'is-history-post' : ''}`}>
-      <div className="job-main">
-        <div className="author-row">
-          <div className="avatar-wrap">
-            {job.metadata?.avatarUrl && !avatarFailed ? (
-              <img className="avatar" src={job.metadata.avatarUrl} alt="" loading="lazy" onError={() => setAvatarFailed(true)} />
-            ) : (
-              <div className="avatar placeholder-avatar"><span>𝕏</span></div>
-            )}
-            {active && <span className="live-dot" />}
-          </div>
-          <div className="author-copy">
-            <div className="author-name">
-              {job.metadata?.authorName ?? (job.status === 'resolving' ? '正在读取帖子…' : 'X 帖子')}
-              {job.metadata && <span>@{job.metadata.username}</span>}
-            </div>
-            <div className="post-meta">
-              {!historical && <span>推文 ID {job.tweetId}</span>}
-              {!historical && job.metadata?.language && <span>{job.metadata.language.toUpperCase()}</span>}
-              <span className="post-date">{formatDate(job.metadata?.publishedAt ?? job.createdAt)}</span>
-            </div>
-          </div>
-          <span className={`status ${STATUS[job.status].className}`}>
-            {statusIcon(job.status)} {STATUS[job.status].label}
-          </span>
-          {historical && complete && job.media.length > 0 && <button
-            type="button"
-            className="history-open-media"
-            title={`打开 ${job.media[activeMediaIndex]?.filename ?? job.media[0].filename}`}
-            aria-label={`打开 ${job.media[activeMediaIndex]?.filename ?? job.media[0].filename}`}
-            onClick={() => onOpenMedia(job.media[activeMediaIndex]?.id ?? job.media[0].id)}
-          ><FolderOpen size={20} /></button>}
-        </div>
-
-        {job.metadata?.text && <p className="post-text">{job.metadata.text}</p>}
-        {job.error && <div className="error-message"><CircleAlert size={15} />{job.error}</div>}
-
-        {active && (
-          <div className="progress-block">
-            <div className="progress-copy">
-              <span>{job.status === 'queued' ? '等待空闲解析槽位' : job.status === 'resolving' ? '正在并行获取元数据与媒体' : `正在并行保存 ${job.media.length} 个媒体文件`}</span>
-              <strong>{job.progress}%</strong>
-            </div>
-            <div className="progress-track"><span style={{ width: `${job.progress}%` }} /></div>
-          </div>
-        )}
-
-        {complete && job.media.length > 0 && (
-          <div className={`media-carousel ${job.media.length === 1 ? 'is-single' : ''}`} aria-label={`此推文的 ${job.media.length} 个媒体文件`}>
-            <div
-              className="media-viewport"
-              ref={mediaViewportRef}
-              style={!xLoginSupported && activeMediaAspectRatio ? { aspectRatio: `${activeMediaAspectRatio}` } : undefined}
-              onScroll={xLoginSupported ? updateActiveMedia : undefined}
-              onTouchStart={xLoginSupported ? undefined : (event) => { touchStartX.current = event.touches[0]?.clientX ?? null; }}
-              onTouchEnd={xLoginSupported ? undefined : (event) => {
-                const startX = touchStartX.current;
-                touchStartX.current = null;
-                if (startX === null || job.media.length < 2) return;
-                const delta = event.changedTouches[0].clientX - startX;
-                if (Math.abs(delta) < 40) return;
-                setActiveMediaIndex((index) => Math.max(0, Math.min(job.media.length - 1, index + (delta < 0 ? 1 : -1))));
-              }}
-              onTouchCancel={xLoginSupported ? undefined : () => { touchStartX.current = null; }}
-            >
-              <div className="media-track" style={!xLoginSupported ? { transform: `translateX(-${activeMediaIndex * 100}%)` } : undefined}>
-                {job.media.map((media, index) => {
-                  const preview = <MediaPreview media={media} controls={!historical} onAspectRatio={(ratio) => {
-                      setMediaAspectRatios((current) => current[media.id] === ratio ? current : { ...current, [media.id]: ratio });
-                    }} />;
-                  return <div className="media-tile" key={media.id}
-                    ref={(node) => { mediaTileRefs.current[index] = node; }}
-                    style={xLoginSupported && job.media.length > 1 ? { aspectRatio: `${mediaAspectRatios[media.id] ?? 1}` } : undefined}
-                  >
-                    {xLoginSupported && historical
-                      ? <button type="button" className="media-open-preview" aria-label={`预览 ${media.filename}`} onClick={() => onPreviewMedia(job.media, index)}>{preview}</button>
-                      : xLoginSupported && (media.kind === 'image' || media.kind === 'gif')
-                        ? <button type="button" className="media-open-preview" aria-label={`查看 ${media.filename}`} onClick={() => onOpenMedia(media.id)}>{preview}</button>
-                      : preview}
-                    {!historical && !xLoginSupported && <div className="media-caption">
-                      <span>{media.kind === 'video' ? <Video size={13} /> : <ImageIcon size={13} />}{media.filename}</span>
-                      <button type="button" title={`打开 ${media.filename}`} aria-label={`打开 ${media.filename}`} onClick={() => onOpenMedia(media.id)}><FolderOpen size={15} /></button>
-                    </div>}
-                  </div>;
-                })}
-              </div>
-            </div>
-            {!historical && xLoginSupported && activeMedia && <div className="media-caption">
-              <span>{activeMedia.kind === 'video' ? <Video size={13} /> : <ImageIcon size={13} />}{activeMedia.filename}</span>
-              <button type="button" title={`打开 ${activeMedia.filename}`} aria-label={`打开 ${activeMedia.filename}`} onClick={() => onOpenMedia(activeMedia.id)}><FolderOpen size={15} /></button>
-            </div>}
-            {job.media.length > 1 && <MediaPagination media={job.media} activeIndex={activeMediaIndex} ariaLabel="选择此推文的媒体文件" unit="个文件" onSelect={showMedia} />}
-            {job.media.length > 1 && <span className="media-counter" aria-live="polite">{activeMediaIndex + 1} / {job.media.length}</span>}
-          </div>
-        )}
-      </div>
-
-      {!(historical && complete) && <footer className="job-footer">
-        {!historical && <span>{job.media.length ? `${job.media.length} 个媒体 · ${formatBytes(totalSize || undefined)}` : `第 ${job.attempts || 1} 次尝试`}</span>}
-        <div className="job-actions">
-          {active && <button className="text-button danger-text" onClick={() => onAction('cancel', job.id)}><X size={15} />取消</button>}
-          {(job.status === 'failed' || job.status === 'canceled') && <button className="text-button" onClick={() => onAction('retry', job.id)}><RotateCcw size={14} />重试</button>}
-          {complete && job.media.length === 1 && !historical && <button type="button" className="text-button" onClick={() => onOpenMedia(job.media[0].id)}><FolderOpen size={15} />打开文件</button>}
-        </div>
-      </footer>}
-    </article>
-  );
-}
-
 export default function App() {
+  const mediaViewer = useMediaViewer();
   const [jobs, setJobs] = useState<DownloadJob[]>([]);
   const [historyTotal, setHistoryTotal] = useState(0);
   const [completedToday, setCompletedToday] = useState(0);
   const [historyPage, setHistoryPage] = useState(0);
   const [input, setInput] = useState('');
   const [tab, setTab] = useState<'queue' | 'history' | 'search'>('queue');
-  const [historyView, setHistoryView] = useState<'all' | 'authors'>('all');
-  const [historyPreview, setHistoryPreview] = useState<{ media: MediaItem[]; index: number } | null>(null);
-  const [historyPreviewDrag, setHistoryPreviewDrag] = useState({ offsetX: 0, animating: false });
+  const [historyView, setHistoryView] = useState<'all' | 'authors' | 'categories'>('all');
+  const [categories, setCategories] = useState<TweetCategory[]>([]);
+  const [allDownloadedCount, setAllDownloadedCount] = useState(0);
+  const [uncategorizedCount, setUncategorizedCount] = useState(0);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedTweetIds, setSelectedTweetIds] = useState<Set<string>>(() => new Set());
+  const [categoryTargets, setCategoryTargets] = useState<string[] | null>(null);
+  const [categoryNameDialogOpen, setCategoryNameDialogOpen] = useState(false);
+  const [categoryToRename, setCategoryToRename] = useState<TweetCategory | null>(null);
+  const [categoryToDelete, setCategoryToDelete] = useState<TweetCategory | null>(null);
   const [archiveRevision, setArchiveRevision] = useState(0);
   const [submitting, setSubmitting] = useState(false);
-  const [dragging, setDragging] = useState(false);
   const [notice, setNotice] = useState('');
   const [choosingFolder, setChoosingFolder] = useState(false);
   const [clearing, setClearing] = useState(false);
@@ -307,164 +68,17 @@ export default function App() {
   const [showSessionPanel, setShowSessionPanel] = useState(false);
   const [sessionBusy, setSessionBusy] = useState(false);
   const archiveBackHandler = useRef<(() => boolean) | null>(null);
-  const historyPreviewRef = useRef<{ media: MediaItem[]; index: number } | null>(null);
-  const historyPreviewDragRef = useRef({ offsetX: 0, animating: false });
-  const historyPreviewStageRef = useRef<HTMLDivElement | null>(null);
-  const historyPreviewPendingIndex = useRef<number | null>(null);
-  const historyPreviewTransitionTimer = useRef<number | null>(null);
-  const historyPreviewScrollY = useRef<number | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
   const handledSharedLinks = useRef(new Set<string>());
   const historyPageRef = useRef(0);
-  const historyPreviewTouch = useRef<{ x: number; y: number; edge: boolean; axis: 'horizontal' | 'vertical' | null } | null>(null);
   const previousHistoryTotal = useRef<number | null>(null);
   const previousTab = useRef(tab);
   const [searchQuery, setSearchQuery] = useState('');
   const urls = useMemo(() => extractUrls(input), [input]);
-  const historyPreviewOpen = historyPreview !== null;
 
   const registerArchiveBackHandler = useCallback((handler: (() => boolean) | null) => {
     archiveBackHandler.current = handler;
   }, []);
-
-  function updateHistoryPreviewDrag(next: { offsetX: number; animating: boolean }) {
-    historyPreviewDragRef.current = next;
-    setHistoryPreviewDrag(next);
-  }
-
-  function clearHistoryPreviewTransitionTimer() {
-    if (historyPreviewTransitionTimer.current !== null) {
-      window.clearTimeout(historyPreviewTransitionTimer.current);
-      historyPreviewTransitionTimer.current = null;
-    }
-  }
-
-  function finishHistoryPreviewTransition() {
-    clearHistoryPreviewTransitionTimer();
-    const targetIndex = historyPreviewPendingIndex.current;
-    const current = historyPreviewRef.current;
-    if (targetIndex !== null && current) {
-      const next = { ...current, index: targetIndex };
-      historyPreviewRef.current = next;
-      setHistoryPreview(next);
-    }
-    historyPreviewPendingIndex.current = null;
-    updateHistoryPreviewDrag({ offsetX: 0, animating: false });
-  }
-
-  function settleHistoryPreviewTrack(targetIndex: number | null, offsetX: number) {
-    clearHistoryPreviewTransitionTimer();
-    historyPreviewPendingIndex.current = targetIndex;
-    updateHistoryPreviewDrag({ offsetX, animating: true });
-    historyPreviewTransitionTimer.current = window.setTimeout(finishHistoryPreviewTransition, 260);
-  }
-
-  function previewHistoryMedia(media: MediaItem[], index: number) {
-    const next = { media, index };
-    clearHistoryPreviewTransitionTimer();
-    historyPreviewPendingIndex.current = null;
-    historyPreviewTouch.current = null;
-    updateHistoryPreviewDrag({ offsetX: 0, animating: false });
-    historyPreviewScrollY.current = window.scrollY;
-    historyPreviewRef.current = next;
-    setHistoryPreview(next);
-  }
-
-  function closeHistoryPreview() {
-    clearHistoryPreviewTransitionTimer();
-    historyPreviewPendingIndex.current = null;
-    historyPreviewTouch.current = null;
-    updateHistoryPreviewDrag({ offsetX: 0, animating: false });
-    historyPreviewRef.current = null;
-    setHistoryPreview(null);
-  }
-
-  function selectHistoryPreview(index: number) {
-    const current = historyPreviewRef.current;
-    if (!current) return;
-    clearHistoryPreviewTransitionTimer();
-    historyPreviewPendingIndex.current = null;
-    historyPreviewTouch.current = null;
-    const next = {
-      ...current,
-      index: Math.max(0, Math.min(current.media.length - 1, index)),
-    };
-    updateHistoryPreviewDrag({ offsetX: 0, animating: false });
-    historyPreviewRef.current = next;
-    setHistoryPreview(next);
-  }
-
-  function startHistoryPreviewSwipe(event: TouchEvent<HTMLElement>) {
-    if (historyPreviewDragRef.current.animating) return;
-    const touch = event.touches[0];
-    if (!touch) return;
-    historyPreviewTouch.current = {
-      x: touch.clientX,
-      y: touch.clientY,
-      edge: touch.clientX <= 24 || touch.clientX >= window.innerWidth - 24,
-      axis: null,
-    };
-  }
-
-  function moveHistoryPreviewSwipe(event: TouchEvent<HTMLElement>) {
-    const start = historyPreviewTouch.current;
-    const touch = event.touches[0];
-    const current = historyPreviewRef.current;
-    if (!start || start.edge || !touch || !current || current.media.length < 2 || historyPreviewDragRef.current.animating) return;
-    const deltaX = touch.clientX - start.x;
-    const deltaY = touch.clientY - start.y;
-    if (Math.abs(deltaX) < 8) return;
-    if (Math.abs(deltaX) < Math.abs(deltaY) * 1.25) {
-      start.axis = 'vertical';
-      return;
-    }
-    start.axis = 'horizontal';
-    const hasNeighbor = deltaX < 0 ? current.index < current.media.length - 1 : current.index > 0;
-    const offsetX = hasNeighbor ? deltaX : Math.sign(deltaX) * Math.min(Math.abs(deltaX) * 0.22, 72);
-    updateHistoryPreviewDrag({ offsetX, animating: false });
-  }
-
-  function finishHistoryPreviewSwipe(event: TouchEvent<HTMLElement>) {
-    const start = historyPreviewTouch.current;
-    historyPreviewTouch.current = null;
-    const touch = event.changedTouches[0];
-    const current = historyPreviewRef.current;
-    if (!start) return;
-    if (start.edge || !current || current.media.length < 2) {
-      updateHistoryPreviewDrag({ offsetX: 0, animating: false });
-      return;
-    }
-    if (!touch) {
-      settleHistoryPreviewTrack(null, 0);
-      return;
-    }
-    const deltaX = touch.clientX - start.x;
-    const deltaY = touch.clientY - start.y;
-    if (start.axis !== 'horizontal' || Math.abs(deltaX) < 48 || Math.abs(deltaX) < Math.abs(deltaY) * 1.25) {
-      if (historyPreviewDragRef.current.offsetX !== 0) settleHistoryPreviewTrack(null, 0);
-      else updateHistoryPreviewDrag({ offsetX: 0, animating: false });
-      return;
-    }
-    const direction = deltaX < 0 ? 1 : -1;
-    const targetIndex = Math.max(0, Math.min(current.media.length - 1, current.index + direction));
-    if (targetIndex === current.index) {
-      settleHistoryPreviewTrack(null, 0);
-      return;
-    }
-    const stage = historyPreviewStageRef.current;
-    const stageStyles = stage ? window.getComputedStyle(stage) : null;
-    const stageWidth = stage
-      ? stage.clientWidth - Number.parseFloat(stageStyles?.paddingLeft ?? '0') - Number.parseFloat(stageStyles?.paddingRight ?? '0')
-      : window.innerWidth;
-    settleHistoryPreviewTrack(targetIndex, direction > 0 ? -stageWidth : stageWidth);
-  }
-
-  function cancelHistoryPreviewSwipe() {
-    const start = historyPreviewTouch.current;
-    historyPreviewTouch.current = null;
-    if (start && !start.edge) settleHistoryPreviewTrack(null, 0);
-  }
 
   const loadJobs = useMemo(() => createJobRefresh(listJobs, HISTORY_PAGE_SIZE, (result, page) => {
     if (xLoginSupported && previousHistoryTotal.current !== null && previousHistoryTotal.current !== result.historyTotal) {
@@ -478,6 +92,13 @@ export default function App() {
     setHistoryPage(page);
   }), []);
   const refreshJobs = useCallback(() => loadJobs(historyPageRef.current), [loadJobs]);
+  const refreshCategories = useCallback(async () => {
+    if (!xLoginSupported) return;
+    const result = await listTweetCategories();
+    setCategories(result.categories);
+    setAllDownloadedCount(result.allTotal);
+    setUncategorizedCount(result.uncategorizedTotal);
+  }, []);
 
   const submitUrls = useCallback(async (requestedUrls: string[]) => {
     if (!requestedUrls.length) return;
@@ -512,12 +133,6 @@ export default function App() {
     await submitUrls(sharedUrls);
   }, [submitUrls]);
 
-  useEffect(() => () => {
-    if (historyPreviewTransitionTimer.current !== null) {
-      window.clearTimeout(historyPreviewTransitionTimer.current);
-    }
-  }, []);
-
   useEffect(() => {
     void refreshJobs().catch((error) => setNotice(error.message));
     void getDownloadFolder().then((result) => {
@@ -541,6 +156,17 @@ export default function App() {
   }, [receiveSharedContent, refreshJobs]);
 
   useEffect(() => {
+    if (!xLoginSupported) return;
+    void refreshCategories().catch((error) => setNotice(error instanceof Error ? error.message : '无法读取分类'));
+    const events = subscribeCategoryChanges(() => {
+      setArchiveRevision((current) => current + 1);
+      void refreshCategories().catch((error) => setNotice(error instanceof Error ? error.message : '无法刷新分类'));
+      void refreshJobs().catch((error) => setNotice(error.message));
+    });
+    return () => { void events.close(); };
+  }, [refreshCategories, refreshJobs]);
+
+  useEffect(() => {
     if (!notice) return;
     const timeout = window.setTimeout(() => setNotice(''), 4200);
     return () => window.clearTimeout(timeout);
@@ -556,6 +182,21 @@ export default function App() {
     if (!xLoginSupported) return;
     const browserWindow = window as Window & { __cobaltGoBack?: () => boolean };
     const handleBack = () => {
+      if (categoryTargets !== null) {
+        setCategoryTargets(null);
+        return true;
+      }
+      if (categoryNameDialogOpen || categoryToDelete !== null) {
+        setCategoryNameDialogOpen(false);
+        setCategoryToRename(null);
+        setCategoryToDelete(null);
+        return true;
+      }
+      if (selectionMode) {
+        setSelectionMode(false);
+        setSelectedTweetIds(new Set());
+        return true;
+      }
       if (clearConfirmationOpen) {
         setClearConfirmationOpen(false);
         return true;
@@ -568,12 +209,7 @@ export default function App() {
         setShowSessionPanel(false);
         return true;
       }
-      if (historyPreviewRef.current) {
-        historyPreviewRef.current = null;
-        setHistoryPreview(null);
-        historyPreviewTouch.current = null;
-        return true;
-      }
+      if (mediaViewer.closeIfOpen()) return true;
       if (archiveBackHandler.current?.()) return true;
       if (tab !== 'queue') {
         setTab('queue');
@@ -586,19 +222,7 @@ export default function App() {
     return () => {
       if (browserWindow.__cobaltGoBack === handleBack) delete browserWindow.__cobaltGoBack;
     };
-  }, [clearConfirmationOpen, folderDialogOpen, showSessionPanel, tab]);
-
-  useEffect(() => {
-    if (!historyPreviewOpen) return;
-    const scrollY = historyPreviewScrollY.current ?? window.scrollY;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      historyPreviewScrollY.current = null;
-      window.scrollTo({ top: scrollY, behavior: 'auto' });
-    };
-  }, [historyPreviewOpen]);
+  }, [categoryTargets, categoryNameDialogOpen, categoryToDelete, selectionMode, clearConfirmationOpen, folderDialogOpen, showSessionPanel, tab, mediaViewer.closeIfOpen]);
 
   useEffect(() => {
     let disposed = false;
@@ -651,6 +275,10 @@ export default function App() {
       historyPageRef.current = 0;
       setHistoryPage(0);
       await refreshJobs();
+      if (xLoginSupported) {
+        setArchiveRevision((current) => current + 1);
+        await refreshCategories();
+      }
       setNotice(`已清除 ${removed} 条历史记录`);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : '无法清除历史记录');
@@ -744,7 +372,67 @@ export default function App() {
     }
   }
 
+  function clearSelection() {
+    setSelectionMode(false);
+    setSelectedTweetIds(new Set());
+  }
+
+  function toggleSelectedTweet(tweetId: string) {
+    setSelectedTweetIds((current) => {
+      const next = new Set(current);
+      if (next.has(tweetId)) next.delete(tweetId);
+      else next.add(tweetId);
+      return next;
+    });
+  }
+
+  function selectCurrentPage(tweetIds: string[]) {
+    setSelectedTweetIds((current) => new Set([...current, ...tweetIds]));
+  }
+
+  function openCategoryPanel(tweetIds: string[]) {
+    const uniqueIds = [...new Set(tweetIds)];
+    if (uniqueIds.length) setCategoryTargets(uniqueIds);
+  }
+
+  async function saveCategoryName(name: string) {
+    if (categoryToRename) await renameTweetCategory(categoryToRename.id, name);
+    else await createTweetCategory(name);
+    setCategoryNameDialogOpen(false);
+    setCategoryToRename(null);
+    setArchiveRevision((current) => current + 1);
+    void refreshCategories().catch((error) => setNotice(error instanceof Error ? error.message : '无法刷新分类'));
+  }
+
+  async function confirmDeleteCategory() {
+    if (!categoryToDelete) return;
+    await deleteTweetCategory(categoryToDelete.id);
+    setCategoryToDelete(null);
+    clearSelection();
+    setArchiveRevision((current) => current + 1);
+    await refreshCategories();
+  }
+
+  function finishCategoryAssignment() {
+    setCategoryTargets(null);
+    clearSelection();
+    setArchiveRevision((current) => current + 1);
+    void Promise.all([refreshJobs(), refreshCategories()]).catch((error) => setNotice(error instanceof Error ? error.message : '分类已保存，但列表刷新失败'));
+  }
+
+  function onCategoryCreated(category: TweetCategory) {
+    setCategories((current) => current.some((item) => item.id === category.id) ? current : [...current, category]);
+    setArchiveRevision((current) => current + 1);
+  }
+
+  function renderHistoryJob(job: DownloadJob) {
+    return <JobCard key={job.id} job={job} onAction={action} onOpenMedia={(id) => void openJobMedia(id)} onPreviewMedia={mediaViewer.open} presentation="history"
+      onClassify={(tweetId) => openCategoryPanel([tweetId])} selectionMode={selectionMode}
+      selected={selectedTweetIds.has(job.tweetId)} onToggleSelection={toggleSelectedTweet} />;
+  }
+
   function jumpToTab(nextTab: 'queue' | 'history' | 'search') {
+    clearSelection();
     setTab(nextTab);
     if (xLoginSupported) window.scrollTo({ top: 0, behavior: 'smooth' });
     else document.querySelector('.workspace')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -766,6 +454,7 @@ export default function App() {
   }
 
   function jumpHome() {
+    clearSelection();
     setTab('queue');
     if (xLoginSupported) window.scrollTo({ top: 0, behavior: 'smooth' });
     else document.querySelector('#top')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -778,63 +467,13 @@ export default function App() {
     void refreshJobs().catch((error) => setNotice(error.message));
   }
 
-  const ingestPanel = (
-    <section className={`ingest-panel ${xLoginSupported ? 'native-ingest-panel' : ''}`}>
-      <div className="panel-heading">
-        <div><span><Link2 size={26} /></span><div><h2>添加链接</h2><small>支持单条或批量导入 X 帖子链接</small></div></div>
-        <div className="privacy-chip"><ShieldCheck size={13} /> {xLoginSupported && sessionConfigured ? '已启用账号访问' : '默认仅公开内容'}</div>
-      </div>
-      <div className="composer">
-        <textarea
-          ref={textareaRef}
-          value={input}
-          onChange={(event) => setInput(event.target.value)}
-          placeholder="粘贴 X 帖子链接"
-          aria-label="X 帖子链接"
-        />
-        <div
-          className={`drop-zone ${dragging ? 'dragging' : ''}`}
-          onDragOver={(event) => { event.preventDefault(); setDragging(true); }}
-          onDragLeave={() => setDragging(false)}
-          onDrop={(event) => { event.preventDefault(); setDragging(false); void importFile(event.dataTransfer.files[0]); }}
-          onClick={() => fileRef.current?.click()}
-          role="button"
-          tabIndex={0}
-          onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); fileRef.current?.click(); } }}
-        >
-          <Upload size={16} /><span>导入 TXT / CSV</span>
-          <input ref={fileRef} type="file" accept=".txt,.csv,text/plain,text/csv" hidden onChange={(event) => void importFile(event.target.files?.[0])} />
-        </div>
-      </div>
-      <div className="submit-row">
-        <div className={`input-count ${urls.length ? 'has-links' : ''}`}><FileText size={15} /><strong>{urls.length}</strong> 条链接已识别</div>
-        <button className="primary-button" onClick={() => void submit()} disabled={!urls.length || submitting}>
-          {submitting ? <LoaderCircle className="spin" size={18} /> : <ArrowDownToLine size={18} />}
-          开始下载
-        </button>
-      </div>
-    </section>
-  );
+  const ingestPanel = <LinkComposer native={xLoginSupported} input={input} linkCount={urls.length}
+    submitting={submitting} sessionConfigured={sessionConfigured} textareaRef={textareaRef}
+    onInput={setInput} onImport={importFile} onSubmit={() => void submit()} onPaste={openComposer} />;
 
-  const sessionPanel = showSessionPanel && (
-    <section className="auth-session-panel" aria-label="X 登录设置">
-      <span className="auth-session-icon"><ShieldCheck size={21} /></span>
-      <div className="auth-session-copy">
-        <strong>{sessionConfigured ? 'X 登录已安全保存' : '下载当前账号可见的受保护帖子'}</strong>
-        <small>{xLoginSupported ? '登录在隔离 WebView 中完成；应用只读取 auth_token 和 ct0，用 Android Keystore 加密后立即清除临时 Cookie 与网页存储。' : '此入口会在 Android 应用中打开隔离登录页，并加密保存 auth_token 和 ct0；浏览器预览不保存任何 Cookie。'}</small>
-      </div>
-      <div className="auth-session-actions">
-        {sessionConfigured ? (
-          <button className="danger-outline-button" type="button" onClick={() => void disconnectX()} disabled={sessionBusy}>移除登录</button>
-        ) : (
-          <button className="auth-login-button" type="button" onClick={() => void connectX()} disabled={sessionBusy}>
-            {sessionBusy ? <LoaderCircle className="spin" size={16} /> : <ShieldCheck size={16} />}打开 X 登录
-          </button>
-        )}
-        <button className="auth-close-button" type="button" onClick={() => setShowSessionPanel(false)} aria-label="关闭 X 登录设置"><X size={16} /></button>
-      </div>
-    </section>
-  );
+  const sessionPanel = showSessionPanel && <SessionPanel native={xLoginSupported} configured={sessionConfigured}
+    busy={sessionBusy} onConnect={() => void connectX()} onDisconnect={() => void disconnectX()}
+    onClose={() => setShowSessionPanel(false)} />;
 
   const quickStats = (
     <section className="quick-stats" aria-label="下载统计">
@@ -845,6 +484,10 @@ export default function App() {
 
   return (
     <div className={`app-shell ${xLoginSupported ? 'is-native' : ''}`}>
+      {xLoginSupported ? <NativeHeader tab={tab} folderReady={folderReady} folderLabel={folderLabel}
+        choosingFolder={choosingFolder} sessionConfigured={sessionConfigured} sessionBusy={sessionBusy}
+        serviceHealthy={serviceHealthy} onFolder={() => setFolderDialogOpen(true)}
+        onAccount={() => setShowSessionPanel((visible) => !visible)} /> : (
       <header className={`topbar ${tab !== 'queue' ? 'is-compact' : ''}`}>
         <div className="topbar-actions">
           {tab === 'queue' && <>
@@ -873,6 +516,7 @@ export default function App() {
           <div className={`service-state ${serviceHealthy === false ? 'is-offline' : ''}`}><span /> {serviceHealthy === null ? '正在检查本地服务' : serviceHealthy ? '本地服务可用' : '本地服务不可用'}</div>
         </div>
       </header>
+      )}
 
       <main id="top" className={xLoginSupported ? 'native-main' : ''}>
         {xLoginSupported ? (
@@ -881,11 +525,11 @@ export default function App() {
             <div className="native-pages">
               <section className={`native-page ${tab === 'queue' ? 'is-current' : ''}`} aria-label="首页">
                 {ingestPanel}
-                {quickStats}
+                <NativeDownloadStats activeCount={activeJobs.length} completedToday={completedToday} />
                 <section className="workspace">
-                  <div className="workspace-head"><div className="workspace-title"><h2>进行中的任务</h2></div></div>
+                  <div className="workspace-head"><div className="workspace-title"><h2>进行中的任务</h2><p>下载状态会自动更新</p></div></div>
                   {activeJobs.length ? (
-                    <div className="job-list">{activeJobs.map((job) => <JobCard key={job.id} job={job} onAction={action} onOpenMedia={(id) => void openJobMedia(id)} onPreviewMedia={previewHistoryMedia} />)}</div>
+                    <div className="job-list">{activeJobs.map((job) => <JobCard key={job.id} job={job} onAction={action} onOpenMedia={(id) => void openJobMedia(id)} onPreviewMedia={mediaViewer.open} />)}</div>
                   ) : (
                     <div className="empty-state">
                       <span><Pause size={25} /></span>
@@ -905,7 +549,11 @@ export default function App() {
                   searchQuery={searchQuery}
                   onSearchQueryChange={setSearchQuery}
                   onDetailBackChange={registerArchiveBackHandler}
-                  renderJob={(job) => <JobCard job={job} onAction={action} onOpenMedia={(id) => void openJobMedia(id)} onPreviewMedia={previewHistoryMedia} presentation="history" />}
+                  selectionMode={selectionMode} selectedTweetIds={selectedTweetIds}
+                  onStartSelection={() => setSelectionMode(true)} onStopSelection={clearSelection}
+                  onSelectPage={selectCurrentPage} onAssign={() => openCategoryPanel([...selectedTweetIds])}
+                  onScopeChange={clearSelection}
+                  renderJob={renderHistoryJob}
                   onError={setNotice}
                 />
               </section>
@@ -913,22 +561,39 @@ export default function App() {
               <section className={`native-page ${tab === 'history' ? 'is-current' : ''}`} aria-label="历史">
                 <section className="workspace native-history-workspace">
                   <div className="workspace-head">
-                    <div className="workspace-title"><span>本地归档</span><h2>历史记录</h2></div>
+                    <div className="workspace-title"><h2>本地归档</h2><p>按帖子或作者浏览</p></div>
                     {historyTotal > 0 && <button className="clear-button" type="button" onClick={requestClearHistory} disabled={clearing}>{clearing ? <LoaderCircle className="spin" size={15} /> : <Trash2 size={15} />}{clearing ? '正在清除' : '清除'}</button>}
                   </div>
                   <div className="archive-view-tabs" role="tablist" aria-label="历史浏览方式">
-                    <button type="button" role="tab" aria-selected={historyView === 'all'} className={historyView === 'all' ? 'selected' : ''} onClick={() => setHistoryView('all')}>全部推文</button>
-                    <button type="button" role="tab" aria-selected={historyView === 'authors'} className={historyView === 'authors' ? 'selected' : ''} onClick={() => setHistoryView('authors')}>作者</button>
+                    <button type="button" role="tab" aria-selected={historyView === 'all'} className={historyView === 'all' ? 'selected' : ''} onClick={() => { clearSelection(); setHistoryView('all'); }}>全部推文</button>
+                    <button type="button" role="tab" aria-selected={historyView === 'authors'} className={historyView === 'authors' ? 'selected' : ''} onClick={() => { clearSelection(); setHistoryView('authors'); }}>作者</button>
+                    <button type="button" role="tab" aria-selected={historyView === 'categories'} className={historyView === 'categories' ? 'selected' : ''} onClick={() => { clearSelection(); setHistoryView('categories'); }}>分类</button>
                   </div>
                   {historyView === 'authors' ? <HistoryBrowser
                     mode="authors"
                     revision={archiveRevision}
                     onDetailBackChange={registerArchiveBackHandler}
-                    renderJob={(job) => <JobCard job={job} onAction={action} onOpenMedia={(id) => void openJobMedia(id)} onPreviewMedia={previewHistoryMedia} presentation="history" />}
+                    selectionMode={selectionMode} selectedTweetIds={selectedTweetIds}
+                    onStartSelection={() => setSelectionMode(true)} onStopSelection={clearSelection}
+                    onSelectPage={selectCurrentPage} onAssign={() => openCategoryPanel([...selectedTweetIds])}
+                    onScopeChange={clearSelection}
+                    renderJob={renderHistoryJob}
                     onError={setNotice}
+                  /> : historyView === 'categories' ? <CategoryBrowser
+                    categories={categories} allTotal={allDownloadedCount} uncategorizedTotal={uncategorizedCount}
+                    revision={archiveRevision} renderJob={renderHistoryJob} onError={setNotice}
+                    selectionMode={selectionMode} selectedTweetIds={selectedTweetIds}
+                    onStartSelection={() => setSelectionMode(true)} onStopSelection={clearSelection}
+                    onSelectPage={selectCurrentPage} onAssign={() => openCategoryPanel([...selectedTweetIds])}
+                    onScopeChange={clearSelection} onCreate={() => { setCategoryToRename(null); setCategoryNameDialogOpen(true); }}
+                    onRename={(category) => { setCategoryToRename(category); setCategoryNameDialogOpen(true); }}
+                    onDelete={setCategoryToDelete}
                   /> : historyJobs.length ? (
                     <>
-                      <div className="job-list history-post-list">{historyJobs.map((job) => <JobCard key={job.id} job={job} onAction={action} onOpenMedia={(id) => void openJobMedia(id)} onPreviewMedia={previewHistoryMedia} presentation="history" />)}</div>
+                      <CategorySelectionBar currentTweetIds={[...new Set(historyJobs.filter((job) => job.status === 'completed').map((job) => job.tweetId))]}
+                        selectionMode={selectionMode} selectedCount={selectedTweetIds.size} onStart={() => setSelectionMode(true)} onStop={clearSelection}
+                        onSelectPage={selectCurrentPage} onAssign={() => openCategoryPanel([...selectedTweetIds])} />
+                      <div className="job-list history-post-list">{historyJobs.map(renderHistoryJob)}</div>
                       {historyTotal > HISTORY_PAGE_SIZE && <nav className="history-pagination" aria-label="下载历史分页">
                         <button onClick={() => showHistoryPage(historyPage - 1)} disabled={historyPage === 0}>上一页</button>
                         <span>第 {historyPage + 1} / {Math.ceil(historyTotal / HISTORY_PAGE_SIZE)} 页</span>
@@ -956,7 +621,7 @@ export default function App() {
               </div>}
               {visibleJobs.length ? (
                 <>
-                  <div className={`job-list ${tab === 'history' ? 'history-post-list' : ''}`}>{visibleJobs.map((job) => <JobCard key={job.id} job={job} onAction={action} onOpenMedia={(id) => void openJobMedia(id)} onPreviewMedia={previewHistoryMedia} presentation={tab === 'history' ? 'history' : 'queue'} />)}</div>
+                  <div className={`job-list ${tab === 'history' ? 'history-post-list' : ''}`}>{visibleJobs.map((job) => <JobCard key={job.id} job={job} onAction={action} onOpenMedia={(id) => void openJobMedia(id)} onPreviewMedia={mediaViewer.open} presentation={tab === 'history' ? 'history' : 'queue'} />)}</div>
                   {tab === 'history' && historyTotal > HISTORY_PAGE_SIZE && <nav className="history-pagination" aria-label="下载历史分页">
                     <button onClick={() => showHistoryPage(historyPage - 1)} disabled={historyPage === 0}>上一页</button>
                     <span>第 {historyPage + 1} / {Math.ceil(historyTotal / HISTORY_PAGE_SIZE)} 页</span>
@@ -979,35 +644,10 @@ export default function App() {
         )}
       </main>
 
-      {xLoginSupported && historyPreview && historyPreview.media[historyPreview.index] && <section className="history-media-viewer" role="dialog" aria-modal="true" aria-label={`媒体预览：${historyPreview.media[historyPreview.index].filename}`} onTouchStart={startHistoryPreviewSwipe} onTouchMove={moveHistoryPreviewSwipe} onTouchEnd={finishHistoryPreviewSwipe} onTouchCancel={cancelHistoryPreviewSwipe}>
-        <header className="history-media-viewer-header">
-          <button type="button" className="history-media-viewer-close" onClick={closeHistoryPreview} aria-label="返回历史记录"><X size={24} /></button>
-          <span>{historyPreview.index + 1} / {historyPreview.media.length}</span>
-          <span className="history-media-viewer-header-spacer" aria-hidden="true" />
-        </header>
-        <div className="history-media-viewer-stage" ref={historyPreviewStageRef}>
-          <div
-            className={`history-media-viewer-track ${historyPreviewDrag.animating ? 'is-settling' : ''}`}
-            style={{ transform: `translate3d(calc(-33.333333% + ${historyPreviewDrag.offsetX}px), 0, 0)` }}
-            onTransitionEnd={(event) => {
-              if (event.target === event.currentTarget && event.propertyName === 'transform') finishHistoryPreviewTransition();
-            }}
-          >
-            {[-1, 0, 1].map((relativeIndex) => {
-              const mediaIndex = historyPreview.index + relativeIndex;
-              const media = historyPreview.media[mediaIndex];
-              return <div className="history-media-viewer-slide" key={media?.id ?? `empty-${relativeIndex}`} aria-hidden={relativeIndex === 0 ? undefined : true}>
-                {media && <MediaPreview key={media.id} media={media} controls={relativeIndex === 0} loading="eager" />}
-              </div>;
-            })}
-          </div>
-        </div>
-        {historyPreview.media.length > 1 && <div className="history-media-viewer-pagination">
-          <MediaPagination media={historyPreview.media} activeIndex={historyPreview.index} ariaLabel="选择推文媒体" unit="个媒体" onSelect={selectHistoryPreview} />
-        </div>}
-      </section>}
+      {xLoginSupported && <HistoryMediaViewer viewer={mediaViewer} />}
 
       <footer className="page-footer"><span>媒体由本地服务解析与保存</span><span>{xLoginSupported && sessionConfigured ? 'X 会话经 Android Keystore 加密' : '公开帖子无需登录'}</span></footer>
+      {xLoginSupported ? <NativeNavigation tab={tab} onNavigate={jumpToTab} onCompose={openComposer} /> : (
       <nav className={`mobile-nav ${xLoginSupported ? 'has-search' : ''}`} aria-label="主导航">
         <button className={tab === 'queue' ? 'selected' : ''} onClick={jumpHome} aria-current={tab === 'queue' ? 'page' : undefined}>
           <Home size={21} /><span>首页</span>
@@ -1022,28 +662,17 @@ export default function App() {
           <History size={20} /><span>历史</span>{historyTotal > 0 && <b>{historyTotal}</b>}
         </button>
       </nav>
-      {folderDialogOpen && <div className="confirmation-backdrop">
-        <section className="confirmation-dialog folder-dialog" role="dialog" aria-modal="true" aria-labelledby="download-folder-title">
-          <h2 id="download-folder-title">选择下载位置</h2>
-          <p>当前位置：{folderLabel}</p>
-          <label htmlFor="download-subfolder">保存到 Download 下的文件夹</label>
-          <div className="folder-path-input"><span>Download /</span><input id="download-subfolder" value={downloadSubfolder} onChange={(event) => setDownloadSubfolder(event.target.value)} placeholder="留空即保存到 Download" autoFocus /></div>
-          <p>可填写多级路径，例如 X Media Archive/收藏。系统不允许通过文件夹选择器直接授权 Download 根目录，这里可直接设置。</p>
-          <button type="button" className="folder-save" onClick={() => void saveDownloadSubfolder()} disabled={choosingFolder}>保存此位置</button>
-          <button type="button" className="folder-pick" onClick={() => void chooseDownloadFolder()} disabled={choosingFolder}>选择其他文件夹…</button>
-          <div className="confirmation-actions"><button type="button" className="confirmation-cancel" onClick={() => setFolderDialogOpen(false)} disabled={choosingFolder}>取消</button></div>
-        </section>
-      </div>}
-      {clearConfirmationOpen && <div className="confirmation-backdrop">
-        <section className="confirmation-dialog" role="alertdialog" aria-modal="true" aria-labelledby="clear-history-title" aria-describedby="clear-history-description">
-          <h2 id="clear-history-title">清除下载历史？</h2>
-          <p id="clear-history-description">此操作会移除完成、失败和取消任务的历史记录，但不会删除已保存的媒体文件。</p>
-          <div className="confirmation-actions">
-            <button type="button" className="confirmation-cancel" autoFocus onClick={() => setClearConfirmationOpen(false)}>取消</button>
-            <button type="button" className="confirmation-danger" onClick={() => void clear()} disabled={clearing}>{clearing ? '正在清除' : '清除历史'}</button>
-          </div>
-        </section>
-      </div>}
+      )}
+      {folderDialogOpen && <DownloadFolderDialog subfolder={downloadSubfolder} currentLocation={folderLabel} busy={choosingFolder}
+        onSubfolder={setDownloadSubfolder} onSave={() => void saveDownloadSubfolder()}
+        onChoose={() => void chooseDownloadFolder()} onClose={() => setFolderDialogOpen(false)} />}
+      {clearConfirmationOpen && <ClearHistoryDialog busy={clearing} onConfirm={() => void clear()}
+        onClose={() => setClearConfirmationOpen(false)} />}
+      {categoryTargets !== null && <TweetCategoryDialog tweetIds={categoryTargets} categories={categories}
+        onCreateCategory={onCategoryCreated} onClose={() => setCategoryTargets(null)} onSaved={finishCategoryAssignment} />}
+      {categoryNameDialogOpen && <CategoryNameDialog category={categoryToRename ?? undefined}
+        onClose={() => { setCategoryNameDialogOpen(false); setCategoryToRename(null); }} onSave={saveCategoryName} />}
+      {categoryToDelete && <DeleteCategoryDialog category={categoryToDelete} onClose={() => setCategoryToDelete(null)} onConfirm={confirmDeleteCategory} />}
       {notice && <div className="toast" role="status"><CircleAlert size={17} />{notice}<button onClick={() => setNotice('')} aria-label="关闭提示"><X size={15} /></button></div>}
     </div>
   );

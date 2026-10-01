@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, CircleAlert, Clock3, FolderOpen, Image as ImageIcon, LoaderCircle, Play, RotateCcw, Video, X } from 'lucide-react';
+import { Check, CircleAlert, Clock3, FolderOpen, Image as ImageIcon, LoaderCircle, Play, RotateCcw, Tags, Video, X } from 'lucide-react';
 import { xLoginSupported } from '../api';
 import type { DownloadJob, JobStatus, MediaItem } from '../types';
 import { formatBytes, formatDate } from '../lib/format';
@@ -21,7 +21,7 @@ function statusIcon(status: JobStatus) {
   return <Clock3 size={13} />;
 }
 
-export function JobCard({ job, onAction, onOpenMedia, onPreviewMedia, presentation = 'queue' }: { job: DownloadJob; onAction: (action: 'cancel' | 'retry', id: string) => void; onOpenMedia: (id: string) => void; onPreviewMedia: (media: MediaItem[], index: number) => void; presentation?: 'queue' | 'history' }) {
+export function JobCard({ job, onAction, onOpenMedia, onPreviewMedia, presentation = 'queue', onClassify, selectionMode = false, selected = false, onToggleSelection }: { job: DownloadJob; onAction: (action: 'cancel' | 'retry', id: string) => void; onOpenMedia: (id: string) => void; onPreviewMedia: (media: MediaItem[], index: number) => void; presentation?: 'queue' | 'history'; onClassify?: (tweetId: string) => void; selectionMode?: boolean; selected?: boolean; onToggleSelection?: (tweetId: string) => void }) {
   const [avatarFailed, setAvatarFailed] = useState(false);
   const [activeMediaIndex, setActiveMediaIndex] = useState(0);
   const [mediaAspectRatios, setMediaAspectRatios] = useState<Record<string, number>>({});
@@ -105,7 +105,7 @@ export function JobCard({ job, onAction, onOpenMedia, onPreviewMedia, presentati
   }
 
   return (
-    <article className={`job-card ${active ? 'is-active' : ''} ${historical ? 'is-history-post' : ''}`}>
+    <article className={`job-card ${active ? 'is-active' : ''} ${historical ? 'is-history-post' : ''} ${selected ? 'is-selected' : ''}`}>
       <div className="job-main">
         <div className="author-row">
           <div className="avatar-wrap">
@@ -202,6 +202,15 @@ export function JobCard({ job, onAction, onOpenMedia, onPreviewMedia, presentati
         )}
       </div>
 
+      {historical && complete && (onClassify || selectionMode) && <footer className="job-footer history-classification-actions">
+        <span>{selectionMode && selected ? '已选中' : ''}</span>
+        <div className="job-actions">
+          {selectionMode && <button type="button" className={`text-button ${selected ? 'is-picked' : ''}`} aria-pressed={selected} onClick={() => onToggleSelection?.(job.tweetId)}>
+            {selected ? <Check size={15} /> : null}{selected ? '已选择' : '选择'}
+          </button>}
+          {onClassify && <button type="button" className="text-button history-classify-button" onClick={() => onClassify(job.tweetId)}><Tags size={15} />分类</button>}
+        </div>
+      </footer>}
       {!(historical && complete) && <footer className="job-footer">
         {!historical && <span>{job.media.length ? `${job.media.length} 个媒体 · ${formatBytes(totalSize || undefined)}` : `第 ${job.attempts || 1} 次尝试`}</span>}
         <div className="job-actions">

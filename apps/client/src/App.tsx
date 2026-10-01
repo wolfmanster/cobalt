@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createJobRefresh } from './jobRefresh';
 import { HistoryBrowser } from './HistoryBrowser';
+import { CategoryBrowser } from './CategoryBrowser';
 import { DownloadFolderDialog, ClearHistoryDialog } from './components/ArchiveDialogs';
+import { CategorySelectionBar } from './components/CategorySelectionBar';
+import { CategoryNameDialog, DeleteCategoryDialog, TweetCategoryDialog } from './components/TweetCategoryDialogs';
 import { LinkComposer } from './components/LinkComposer';
 import { SessionPanel } from './components/SessionPanel';
 import { NativeHeader, NativeNavigation, NativeDownloadStats } from './components/NativeShell';
@@ -26,8 +29,9 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import { cancelJob, clearHistory, clearXSession, consumeSharedContent, createJobs, getDownloadFolder, getHealth, getXSessionStatus, listJobs, openMedia, readClipboardText, retryJob, selectDownloadFolder, setDownloadPath, startXLogin, subscribeJobs, subscribeSharedContent, xLoginSupported } from './api';
+import { cancelJob, clearHistory, clearXSession, consumeSharedContent, createJobs, createTweetCategory, deleteTweetCategory, getDownloadFolder, getHealth, getXSessionStatus, listJobs, listTweetCategories, openMedia, readClipboardText, renameTweetCategory, retryJob, selectDownloadFolder, setDownloadPath, startXLogin, subscribeCategoryChanges, subscribeJobs, subscribeSharedContent, xLoginSupported } from './api';
 import type { DownloadJob } from './types';
+import type { TweetCategory } from './nativeArchive';
 
 const HISTORY_PAGE_SIZE = 25;
 
@@ -39,7 +43,16 @@ export default function App() {
   const [historyPage, setHistoryPage] = useState(0);
   const [input, setInput] = useState('');
   const [tab, setTab] = useState<'queue' | 'history' | 'search'>('queue');
-  const [historyView, setHistoryView] = useState<'all' | 'authors'>('all');
+  const [historyView, setHistoryView] = useState<'all' | 'authors' | 'categories'>('all');
+  const [categories, setCategories] = useState<TweetCategory[]>([]);
+  const [allDownloadedCount, setAllDownloadedCount] = useState(0);
+  const [uncategorizedCount, setUncategorizedCount] = useState(0);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedTweetIds, setSelectedTweetIds] = useState<Set<string>>(() => new Set());
+  const [categoryTargets, setCategoryTargets] = useState<string[] | null>(null);
+  const [categoryNameDialogOpen, setCategoryNameDialogOpen] = useState(false);
+  const [categoryToRename, setCategoryToRename] = useState<TweetCategory | null>(null);
+  const [categoryToDelete, setCategoryToDelete] = useState<TweetCategory | null>(null);
   const [archiveRevision, setArchiveRevision] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [notice, setNotice] = useState('');
@@ -79,6 +92,13 @@ export default function App() {
     setHistoryPage(page);
   }), []);
   const refreshJobs = useCallback(() => loadJobs(historyPageRef.current), [loadJobs]);
+  const refreshCategories = useCallback(async () => {
+    if (!xLoginSupported) return;
+    const result = await listTweetCategories();
+    setCategories(result.categories);
+    setAllDownloadedCount(result.allTotal);
+    setUncategorizedCount(result.uncategorizedTotal);
+  }, []);
 
   const submitUrls = useCallback(async (requestedUrls: string[]) => {
     if (!requestedUrls.length) return;
@@ -136,6 +156,17 @@ export default function App() {
   }, [receiveSharedContent, refreshJobs]);
 
   useEffect(() => {
+    if (!xLoginSupported) return;
+    void refreshCategories().catch((error) => setNotice(error instanceof Error ? error.message : '无法读取分类'));
+    const events = subscribeCategoryChanges(() => {
+      setArchiveRevision((current) => current + 1);
+      void refreshCategories().catch((error) => setNotice(error instanceof Error ? error.message : '无法刷新分类'));
+      void refreshJobs().catch((error) => setNotice(error.message));
+    });
+    return () => { void events.close(); };
+  }, [refreshCategories, refreshJobs]);
+
+  useEffect(() => {
     if (!notice) return;
     const timeout = window.setTimeout(() => setNotice(''), 4200);
     return () => window.clearTimeout(timeout);
@@ -151,6 +182,21 @@ export default function App() {
     if (!xLoginSupported) return;
     const browserWindow = window as Window & { __cobaltGoBack?: () => boolean };
     const handleBack = () => {
+      if (categoryTargets !== null) {
+        setCategoryTargets(null);
+        return true;
+      }
+      if (categoryNameDialogOpen || categoryToDelete !== null) {
+        setCategoryNameDialogOpen(false);
+        setCategoryToRename(null);
+        setCategoryToDelete(null);
+        return true;
+      }
+      if (selectionMode) {
+        setSelectionMode(false);
+        setSelectedTweetIds(new Set());
+        return true;
+      }
       if (clearConfirmationOpen) {
         setClearConfirmationOpen(false);
         return true;
@@ -176,7 +222,7 @@ export default function App() {
     return () => {
       if (browserWindow.__cobaltGoBack === handleBack) delete browserWindow.__cobaltGoBack;
     };
-  }, [clearConfirmationOpen, folderDialogOpen, showSessionPanel, tab, mediaViewer.closeIfOpen]);
+  }, [categoryTargets, categoryNameDialogOpen, categoryToDelete, selectionMode, clearConfirmationOpen, folderDialogOpen, showSessionPanel, tab, mediaViewer.closeIfOpen]);
 
   useEffect(() => {
     let disposed = false;
@@ -229,6 +275,10 @@ export default function App() {
       historyPageRef.current = 0;
       setHistoryPage(0);
       await refreshJobs();
+      if (xLoginSupported) {
+        setArchiveRevision((current) => current + 1);
+        await refreshCategories();
+      }
       setNotice(`已清除 ${removed} 条历史记录`);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : '无法清除历史记录');
@@ -322,7 +372,67 @@ export default function App() {
     }
   }
 
+  function clearSelection() {
+    setSelectionMode(false);
+    setSelectedTweetIds(new Set());
+  }
+
+  function toggleSelectedTweet(tweetId: string) {
+    setSelectedTweetIds((current) => {
+      const next = new Set(current);
+      if (next.has(tweetId)) next.delete(tweetId);
+      else next.add(tweetId);
+      return next;
+    });
+  }
+
+  function selectCurrentPage(tweetIds: string[]) {
+    setSelectedTweetIds((current) => new Set([...current, ...tweetIds]));
+  }
+
+  function openCategoryPanel(tweetIds: string[]) {
+    const uniqueIds = [...new Set(tweetIds)];
+    if (uniqueIds.length) setCategoryTargets(uniqueIds);
+  }
+
+  async function saveCategoryName(name: string) {
+    if (categoryToRename) await renameTweetCategory(categoryToRename.id, name);
+    else await createTweetCategory(name);
+    setCategoryNameDialogOpen(false);
+    setCategoryToRename(null);
+    setArchiveRevision((current) => current + 1);
+    void refreshCategories().catch((error) => setNotice(error instanceof Error ? error.message : '无法刷新分类'));
+  }
+
+  async function confirmDeleteCategory() {
+    if (!categoryToDelete) return;
+    await deleteTweetCategory(categoryToDelete.id);
+    setCategoryToDelete(null);
+    clearSelection();
+    setArchiveRevision((current) => current + 1);
+    await refreshCategories();
+  }
+
+  function finishCategoryAssignment() {
+    setCategoryTargets(null);
+    clearSelection();
+    setArchiveRevision((current) => current + 1);
+    void Promise.all([refreshJobs(), refreshCategories()]).catch((error) => setNotice(error instanceof Error ? error.message : '分类已保存，但列表刷新失败'));
+  }
+
+  function onCategoryCreated(category: TweetCategory) {
+    setCategories((current) => current.some((item) => item.id === category.id) ? current : [...current, category]);
+    setArchiveRevision((current) => current + 1);
+  }
+
+  function renderHistoryJob(job: DownloadJob) {
+    return <JobCard key={job.id} job={job} onAction={action} onOpenMedia={(id) => void openJobMedia(id)} onPreviewMedia={mediaViewer.open} presentation="history"
+      onClassify={(tweetId) => openCategoryPanel([tweetId])} selectionMode={selectionMode}
+      selected={selectedTweetIds.has(job.tweetId)} onToggleSelection={toggleSelectedTweet} />;
+  }
+
   function jumpToTab(nextTab: 'queue' | 'history' | 'search') {
+    clearSelection();
     setTab(nextTab);
     if (xLoginSupported) window.scrollTo({ top: 0, behavior: 'smooth' });
     else document.querySelector('.workspace')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -344,6 +454,7 @@ export default function App() {
   }
 
   function jumpHome() {
+    clearSelection();
     setTab('queue');
     if (xLoginSupported) window.scrollTo({ top: 0, behavior: 'smooth' });
     else document.querySelector('#top')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -438,7 +549,11 @@ export default function App() {
                   searchQuery={searchQuery}
                   onSearchQueryChange={setSearchQuery}
                   onDetailBackChange={registerArchiveBackHandler}
-                  renderJob={(job) => <JobCard job={job} onAction={action} onOpenMedia={(id) => void openJobMedia(id)} onPreviewMedia={mediaViewer.open} presentation="history" />}
+                  selectionMode={selectionMode} selectedTweetIds={selectedTweetIds}
+                  onStartSelection={() => setSelectionMode(true)} onStopSelection={clearSelection}
+                  onSelectPage={selectCurrentPage} onAssign={() => openCategoryPanel([...selectedTweetIds])}
+                  onScopeChange={clearSelection}
+                  renderJob={renderHistoryJob}
                   onError={setNotice}
                 />
               </section>
@@ -450,18 +565,35 @@ export default function App() {
                     {historyTotal > 0 && <button className="clear-button" type="button" onClick={requestClearHistory} disabled={clearing}>{clearing ? <LoaderCircle className="spin" size={15} /> : <Trash2 size={15} />}{clearing ? '正在清除' : '清除'}</button>}
                   </div>
                   <div className="archive-view-tabs" role="tablist" aria-label="历史浏览方式">
-                    <button type="button" role="tab" aria-selected={historyView === 'all'} className={historyView === 'all' ? 'selected' : ''} onClick={() => setHistoryView('all')}>全部推文</button>
-                    <button type="button" role="tab" aria-selected={historyView === 'authors'} className={historyView === 'authors' ? 'selected' : ''} onClick={() => setHistoryView('authors')}>作者</button>
+                    <button type="button" role="tab" aria-selected={historyView === 'all'} className={historyView === 'all' ? 'selected' : ''} onClick={() => { clearSelection(); setHistoryView('all'); }}>全部推文</button>
+                    <button type="button" role="tab" aria-selected={historyView === 'authors'} className={historyView === 'authors' ? 'selected' : ''} onClick={() => { clearSelection(); setHistoryView('authors'); }}>作者</button>
+                    <button type="button" role="tab" aria-selected={historyView === 'categories'} className={historyView === 'categories' ? 'selected' : ''} onClick={() => { clearSelection(); setHistoryView('categories'); }}>分类</button>
                   </div>
                   {historyView === 'authors' ? <HistoryBrowser
                     mode="authors"
                     revision={archiveRevision}
                     onDetailBackChange={registerArchiveBackHandler}
-                    renderJob={(job) => <JobCard job={job} onAction={action} onOpenMedia={(id) => void openJobMedia(id)} onPreviewMedia={mediaViewer.open} presentation="history" />}
+                    selectionMode={selectionMode} selectedTweetIds={selectedTweetIds}
+                    onStartSelection={() => setSelectionMode(true)} onStopSelection={clearSelection}
+                    onSelectPage={selectCurrentPage} onAssign={() => openCategoryPanel([...selectedTweetIds])}
+                    onScopeChange={clearSelection}
+                    renderJob={renderHistoryJob}
                     onError={setNotice}
+                  /> : historyView === 'categories' ? <CategoryBrowser
+                    categories={categories} allTotal={allDownloadedCount} uncategorizedTotal={uncategorizedCount}
+                    revision={archiveRevision} renderJob={renderHistoryJob} onError={setNotice}
+                    selectionMode={selectionMode} selectedTweetIds={selectedTweetIds}
+                    onStartSelection={() => setSelectionMode(true)} onStopSelection={clearSelection}
+                    onSelectPage={selectCurrentPage} onAssign={() => openCategoryPanel([...selectedTweetIds])}
+                    onScopeChange={clearSelection} onCreate={() => { setCategoryToRename(null); setCategoryNameDialogOpen(true); }}
+                    onRename={(category) => { setCategoryToRename(category); setCategoryNameDialogOpen(true); }}
+                    onDelete={setCategoryToDelete}
                   /> : historyJobs.length ? (
                     <>
-                      <div className="job-list history-post-list">{historyJobs.map((job) => <JobCard key={job.id} job={job} onAction={action} onOpenMedia={(id) => void openJobMedia(id)} onPreviewMedia={mediaViewer.open} presentation="history" />)}</div>
+                      <CategorySelectionBar currentTweetIds={[...new Set(historyJobs.filter((job) => job.status === 'completed').map((job) => job.tweetId))]}
+                        selectionMode={selectionMode} selectedCount={selectedTweetIds.size} onStart={() => setSelectionMode(true)} onStop={clearSelection}
+                        onSelectPage={selectCurrentPage} onAssign={() => openCategoryPanel([...selectedTweetIds])} />
+                      <div className="job-list history-post-list">{historyJobs.map(renderHistoryJob)}</div>
                       {historyTotal > HISTORY_PAGE_SIZE && <nav className="history-pagination" aria-label="下载历史分页">
                         <button onClick={() => showHistoryPage(historyPage - 1)} disabled={historyPage === 0}>上一页</button>
                         <span>第 {historyPage + 1} / {Math.ceil(historyTotal / HISTORY_PAGE_SIZE)} 页</span>
@@ -536,6 +668,11 @@ export default function App() {
         onChoose={() => void chooseDownloadFolder()} onClose={() => setFolderDialogOpen(false)} />}
       {clearConfirmationOpen && <ClearHistoryDialog busy={clearing} onConfirm={() => void clear()}
         onClose={() => setClearConfirmationOpen(false)} />}
+      {categoryTargets !== null && <TweetCategoryDialog tweetIds={categoryTargets} categories={categories}
+        onCreateCategory={onCategoryCreated} onClose={() => setCategoryTargets(null)} onSaved={finishCategoryAssignment} />}
+      {categoryNameDialogOpen && <CategoryNameDialog category={categoryToRename ?? undefined}
+        onClose={() => { setCategoryNameDialogOpen(false); setCategoryToRename(null); }} onSave={saveCategoryName} />}
+      {categoryToDelete && <DeleteCategoryDialog category={categoryToDelete} onClose={() => setCategoryToDelete(null)} onConfirm={confirmDeleteCategory} />}
       {notice && <div className="toast" role="status"><CircleAlert size={17} />{notice}<button onClick={() => setNotice('')} aria-label="关闭提示"><X size={15} /></button></div>}
     </div>
   );

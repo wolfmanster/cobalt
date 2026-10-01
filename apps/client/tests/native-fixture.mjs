@@ -24,6 +24,14 @@ export function installNativeFixture(options = {}) {
   const authors = [{ authorKey: 'author-1', authorName: '山间来信', username: 'mountain_notes',
     avatarUrl: image(80, 80, '#84afa1'), tweetCount: 27, latestDownloadedAt: '2026-09-30T01:00:00Z' }];
   let jobs = options.empty ? [] : [makeJob(100, 'downloading'), makeJob(101, 'queued'), ...Array.from({ length: 27 }, (_, i) => makeJob(i))];
+  const stored = (() => { try { return JSON.parse(sessionStorage.getItem('__nativeArchiveFixtureCategories') ?? 'null'); } catch { return null; } })();
+  let categories = stored?.categories ?? (options.categories ?? []);
+  let assignments = stored?.assignments ?? (options.assignments ?? {});
+  let failedWrites = options.failCategoryWrites ?? 0;
+  const persistCategories = () => sessionStorage.setItem('__nativeArchiveFixtureCategories', JSON.stringify({ categories, assignments }));
+  const categoryMatches = (job, categoryId) => !categoryId || (categoryId === '__uncategorized__'
+    ? !(assignments[job.tweetId] ?? []).length
+    : (assignments[job.tweetId] ?? []).includes(categoryId));
   let configured = options.configured ?? true;
   const listeners = new Map();
   let callbackId = 0;
@@ -36,8 +44,52 @@ export function installNativeFixture(options = {}) {
       jobs: [...jobs.filter((job) => ['queued', 'resolving', 'downloading'].includes(job.status)), ...terminal().slice(historyOffset, historyOffset + historyLimit)],
       historyTotal: terminal().length, completedToday: terminal().filter((job) => job.status === 'completed').length,
     }),
-    listDownloadedPosts: ({ query = '', offset = 0, limit = 25 } = {}) => ({ jobs: matching(query) ? terminal().slice(offset, offset + limit) : [], total: matching(query) ? terminal().length : 0 }),
+    listDownloadedPosts: ({ query = '', categoryId, offset = 0, limit = 25 } = {}) => {
+      const posts = jobs.filter((job) => job.status === 'completed' && matching(query) && categoryMatches(job, categoryId));
+      return { jobs: posts.slice(offset, offset + limit), total: posts.length };
+    },
     listAuthors: ({ query = '' } = {}) => ({ authors: !options.empty && matching(query) ? authors : [], total: !options.empty && matching(query) ? 1 : 0 }),
+    listTweetCategories: () => ({
+      categories: categories.map((category) => ({ ...category, tweetCount: [...new Set(jobs.filter((job) => job.status === 'completed' && (assignments[job.tweetId] ?? []).includes(category.id)).map((job) => job.tweetId))].length })),
+      allTotal: jobs.filter((job) => job.status === 'completed').length,
+      uncategorizedTotal: jobs.filter((job) => job.status === 'completed' && !(assignments[job.tweetId] ?? []).length).length,
+    }),
+    createTweetCategory: ({ name }) => {
+      const normalized = name.trim().toLocaleLowerCase('en-US');
+      if (!normalized || [...name.trim()].length > 30) throw new Error('分类名需为 1–30 个字符');
+      if (categories.some((category) => category.name.trim().toLocaleLowerCase('en-US') === normalized)) throw new Error('分类名已存在');
+      const category = { id: `category-${Date.now()}-${categories.length}`, name: name.trim(), createdAt: new Date().toISOString(), tweetCount: 0 };
+      categories = [...categories, category]; persistCategories(); queueMicrotask(() => emit('categoriesChanged')); return category;
+    },
+    renameTweetCategory: ({ id, name }) => {
+      const normalized = name.trim().toLocaleLowerCase('en-US');
+      if (categories.some((category) => category.id !== id && category.name.trim().toLocaleLowerCase('en-US') === normalized)) throw new Error('分类名已存在');
+      const category = categories.find((item) => item.id === id);
+      if (!category) throw new Error('分类不存在');
+      category.name = name.trim(); persistCategories(); queueMicrotask(() => emit('categoriesChanged')); return category;
+    },
+    deleteTweetCategory: ({ id }) => {
+      categories = categories.filter((item) => item.id !== id);
+      for (const tweetId of Object.keys(assignments)) assignments[tweetId] = assignments[tweetId].filter((categoryId) => categoryId !== id);
+      persistCategories(); queueMicrotask(() => emit('categoriesChanged')); return { deleted: true };
+    },
+    getTweetCategoryAssignments: ({ tweetIds }) => ({ assignments: Object.fromEntries(tweetIds.map((tweetId) => [tweetId, assignments[tweetId] ?? []])) }),
+    updateTweetCategories: ({ tweetIds, addCategoryIds, removeCategoryIds }) => {
+      if (failedWrites > 0) { failedWrites -= 1; throw new Error('模拟写入失败'); }
+      for (const tweetId of tweetIds) {
+        const current = new Set(assignments[tweetId] ?? []);
+        for (const id of addCategoryIds) current.add(id);
+        for (const id of removeCategoryIds) current.delete(id);
+        assignments[tweetId] = [...current];
+      }
+      persistCategories(); queueMicrotask(() => emit('categoriesChanged')); return { updated: new Set(tweetIds).size };
+    },
+    completeJob: (jobId) => {
+      const job = jobs.find((item) => item.id === jobId);
+      if (!job) throw new Error(`Unknown fixture job: ${jobId}`);
+      job.status = 'completed'; job.progress = 100;
+      queueMicrotask(() => { emit('jobsChanged'); emit('categoriesChanged'); });
+    },
     getDownloadFolder: () => ({ selected: true, mode: 'downloads', label: 'Download/X Media Archive' }),
     getXSessionStatus: () => ({ configured }), getHealth: () => ({ ok: !options.offline, local: true }),
     consumeSharedContent: () => ({ text: options.shared ?? '' }), readClipboard: () => ({ text: 'https://x.com/archive/status/1234567890' }),
@@ -48,7 +100,12 @@ export function installNativeFixture(options = {}) {
     createJobs: ({ urls }) => { const created = urls.map((_, i) => makeJob(200 + i, 'queued')); jobs.push(...created); queueMicrotask(() => emit('jobsChanged')); return { created, duplicates: [], rejected: [] }; },
     cancelJob: ({ id }) => { const job = jobs.find((item) => item.id === id); job.status = 'canceled'; queueMicrotask(() => emit('jobsChanged')); return job; },
     retryJob: ({ id }) => { const job = jobs.find((item) => item.id === id); job.status = 'queued'; queueMicrotask(() => emit('jobsChanged')); return job; },
-    clearHistory: () => { const removed = terminal().length; jobs = jobs.filter((job) => !terminal().includes(job)); queueMicrotask(() => emit('jobsChanged')); return { removed }; },
+    clearHistory: () => {
+      const removed = terminal().length; jobs = jobs.filter((job) => !terminal().includes(job));
+      const liveTweetIds = new Set(jobs.map((job) => job.tweetId));
+      for (const tweetId of Object.keys(assignments)) if (!liveTweetIds.has(tweetId)) delete assignments[tweetId];
+      persistCategories(); queueMicrotask(() => { emit('jobsChanged'); emit('categoriesChanged'); }); return { removed };
+    },
     openMedia: () => ({}),
     removeListener: ({ callbackId }) => { listeners.delete(callbackId); return {}; },
   };
@@ -68,5 +125,5 @@ export function installNativeFixture(options = {}) {
       const id = String(++callbackId); listeners.set(id, { eventName: args.eventName, callback }); return id;
     },
   };
-  window.__nativeFixture = { calls, emit };
+  window.__nativeFixture = { calls, emit, completeJob: implementations.completeJob, getState: () => ({ jobs, categories, assignments }) };
 }

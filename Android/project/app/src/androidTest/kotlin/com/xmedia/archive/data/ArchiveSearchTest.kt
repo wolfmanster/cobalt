@@ -50,12 +50,12 @@ class ArchiveSearchTest {
         }
         dao.upsertJob(job("failed", "42", "writer", "作者", "中文正文", "2026-09-01", "failed"))
 
-        assertEquals(130, dao.downloadedPostCount("id:42", ""))
-        assertEquals(25, dao.listDownloadedPosts("id:42", "", 100, 25).size)
-        assertEquals(5, dao.listDownloadedPosts("id:42", "", 125, 25).size)
-        assertEquals(1, dao.downloadedPostCount(null, "中文"))
-        assertEquals("post-0", dao.listDownloadedPosts(null, "中文", 0, 25).single().id)
-        assertEquals(0, dao.downloadedPostCount(null, "不存在"))
+        assertEquals(130, dao.downloadedPostCount("id:42", null, ""))
+        assertEquals(25, dao.listDownloadedPosts("id:42", null, "", 100, 25).size)
+        assertEquals(5, dao.listDownloadedPosts("id:42", null, "", 125, 25).size)
+        assertEquals(1, dao.downloadedPostCount(null, null, "中文"))
+        assertEquals("post-0", dao.listDownloadedPosts(null, null, "中文", 0, 25).single().id)
+        assertEquals(0, dao.downloadedPostCount(null, null, "不存在"))
     }
 
     private fun job(

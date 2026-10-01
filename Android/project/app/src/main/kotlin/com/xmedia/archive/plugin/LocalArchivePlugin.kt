@@ -35,6 +35,7 @@ class LocalArchivePlugin : Plugin() {
     private lateinit var sessionStore: XAuthSessionStore
     private val scope = CoroutineScope(Dispatchers.Main.immediate + Job())
     private var pendingSharedText: String? = null
+    private var completedJobSnapshot: Map<String, String>? = null
 
     override fun load() {
         super.load()
@@ -44,6 +45,13 @@ class LocalArchivePlugin : Plugin() {
         scope.launch {
             repository.observeJobs().collectLatest {
                 notifyListeners("jobsChanged", JSObject())
+                val completedSnapshot = it.asSequence()
+                    .filter { job -> job.status == JobStatus.COMPLETED.name.lowercase() }
+                    .associate { job -> job.id to job.updatedAt }
+                if (completedSnapshot != completedJobSnapshot) {
+                    completedJobSnapshot = completedSnapshot
+                    notifyListeners("categoriesChanged", JSObject())
+                }
             }
         }
         scope.launch {
@@ -198,12 +206,103 @@ class LocalArchivePlugin : Plugin() {
         val limit = (call.getInt("limit") ?: 25).coerceIn(1, 25)
         val query = call.getString("query").orEmpty()
         val authorKey = call.getString("authorKey")?.takeIf(String::isNotBlank)
+        val categoryId = call.getString("categoryId")?.takeIf(String::isNotBlank)
         scope.launch {
             try {
-                call.resolve(JSObject(repository.downloadedPostsJson(authorKey, query, offset, limit).toString()))
+                call.resolve(JSObject(repository.downloadedPostsJson(authorKey, categoryId, query, offset, limit).toString()))
             } catch (error: Exception) {
                 call.reject(error.message ?: "无法读取已下载推文")
             }
+        }
+    }
+
+    @PluginMethod
+    fun listTweetCategories(call: PluginCall) {
+        scope.launch {
+            runCatching { repository.categoriesJson() }
+                .onSuccess { call.resolve(JSObject(it.toString())) }
+                .onFailure { call.reject(it.message ?: "无法读取分类") }
+        }
+    }
+
+    @PluginMethod
+    fun createTweetCategory(call: PluginCall) {
+        val name = call.getString("name")
+        if (name == null) {
+            call.reject("请输入分类名")
+            return
+        }
+        scope.launch {
+            runCatching { repository.createTweetCategory(name) }
+                .onSuccess {
+                    notifyListeners("categoriesChanged", JSObject())
+                    call.resolve(JSObject(it.toString()))
+                }
+                .onFailure { call.reject(it.message ?: "无法创建分类") }
+        }
+    }
+
+    @PluginMethod
+    fun renameTweetCategory(call: PluginCall) {
+        val id = call.getString("id")
+        val name = call.getString("name")
+        if (id.isNullOrBlank() || name == null) {
+            call.reject("分类信息不完整")
+            return
+        }
+        scope.launch {
+            runCatching { repository.renameTweetCategory(id, name) }
+                .onSuccess {
+                    notifyListeners("categoriesChanged", JSObject())
+                    call.resolve(JSObject(it.toString()))
+                }
+                .onFailure { call.reject(it.message ?: "无法重命名分类") }
+        }
+    }
+
+    @PluginMethod
+    fun deleteTweetCategory(call: PluginCall) {
+        val id = call.getString("id")
+        if (id.isNullOrBlank()) {
+            call.reject("缺少分类 ID")
+            return
+        }
+        scope.launch {
+            runCatching { repository.deleteTweetCategory(id) }
+                .onSuccess {
+                    notifyListeners("categoriesChanged", JSObject())
+                    call.resolve(JSObject().put("deleted", it))
+                }
+                .onFailure { call.reject(it.message ?: "无法删除分类") }
+        }
+    }
+
+    @PluginMethod
+    fun getTweetCategoryAssignments(call: PluginCall) {
+        val tweetIds = call.getArray("tweetIds")?.let { array -> (0 until array.length()).mapNotNull { array.optString(it).takeIf(String::isNotBlank) } }.orEmpty()
+        scope.launch {
+            runCatching { repository.tweetCategoryAssignments(tweetIds) }
+                .onSuccess { call.resolve(JSObject(it.toString())) }
+                .onFailure { call.reject(it.message ?: "无法读取推文分类") }
+        }
+    }
+
+    @PluginMethod
+    fun updateTweetCategories(call: PluginCall) {
+        val tweetIds = call.getArray("tweetIds")?.let { array -> (0 until array.length()).mapNotNull { array.optString(it).takeIf(String::isNotBlank) } }.orEmpty()
+        val addIds = call.getArray("addCategoryIds")?.let { array -> (0 until array.length()).mapNotNull { array.optString(it).takeIf(String::isNotBlank) } }.orEmpty()
+        val removeIds = call.getArray("removeCategoryIds")?.let { array -> (0 until array.length()).mapNotNull { array.optString(it).takeIf(String::isNotBlank) } }.orEmpty()
+        if (tweetIds.isEmpty()) {
+            call.reject("请选择至少一条推文")
+            return
+        }
+        scope.launch {
+            runCatching { repository.updateTweetCategories(tweetIds, addIds, removeIds) }
+                .onSuccess {
+                    notifyListeners("categoriesChanged", JSObject())
+                    call.resolve(JSObject().put("updated", tweetIds.distinct().size))
+                }
+                .onFailure { call.reject(it.message ?: "无法更新分类") }
         }
     }
 

@@ -1,6 +1,7 @@
 import type { DownloadJob } from './types';
 import { Capacitor } from '@capacitor/core';
 import { LocalArchive } from './nativeArchive';
+import type { TweetCategory } from './nativeArchive';
 
 const native = Capacitor.isNativePlatform();
 export const xLoginSupported = native;
@@ -69,12 +70,36 @@ export function getDownloadFolder() {
   return Promise.resolve({ selected: true, mode: 'downloads' as const, label: 'Download/X Media Archive' });
 }
 
-export function listDownloadedPosts(options: { authorKey?: string; query: string; offset: number; limit: number }) {
+export function listDownloadedPosts(options: { authorKey?: string; categoryId?: string; query: string; offset: number; limit: number }) {
   return LocalArchive.listDownloadedPosts(options);
 }
 
 export function listAuthors(options: { query: string; offset: number; limit: number }) {
   return LocalArchive.listAuthors(options);
+}
+
+export function listTweetCategories() {
+  return LocalArchive.listTweetCategories();
+}
+
+export function createTweetCategory(name: string): Promise<TweetCategory> {
+  return LocalArchive.createTweetCategory({ name });
+}
+
+export function renameTweetCategory(id: string, name: string): Promise<TweetCategory> {
+  return LocalArchive.renameTweetCategory({ id, name });
+}
+
+export function deleteTweetCategory(id: string) {
+  return LocalArchive.deleteTweetCategory({ id });
+}
+
+export function getTweetCategoryAssignments(tweetIds: string[]) {
+  return LocalArchive.getTweetCategoryAssignments({ tweetIds });
+}
+
+export function updateTweetCategories(tweetIds: string[], addCategoryIds: string[], removeCategoryIds: string[]) {
+  return LocalArchive.updateTweetCategories({ tweetIds, addCategoryIds, removeCategoryIds });
 }
 
 export function getHealth() {
@@ -135,6 +160,21 @@ export function subscribeJobs(onChange: () => void) {
   const events = new EventSource('/api/events');
   events.onmessage = () => onChange();
   return { close: async () => events.close() };
+}
+
+export function subscribeCategoryChanges(onChange: () => void) {
+  if (!native) return { close: async () => undefined };
+  let handle: { remove: () => Promise<void> } | undefined;
+  const ready = LocalArchive.addListener('categoriesChanged', onChange).then((value) => {
+    handle = value;
+    return value;
+  });
+  return {
+    close: async () => {
+      await ready;
+      await handle?.remove();
+    },
+  };
 }
 
 export function subscribeSharedContent(onText: (text: string) => void) {

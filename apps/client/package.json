@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "test:ui": "node --test tests/native-ui.test.mjs"
+    "test:ui": "node --test tests/native-ui.test.mjs tests/native-categories.test.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^6.2.1",

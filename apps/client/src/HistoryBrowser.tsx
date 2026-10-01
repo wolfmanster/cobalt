@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ArrowLeft, Search, X } from 'lucide-react';
 import { listAuthors, listDownloadedPosts } from './api';
+import { CategorySelectionBar } from './components/CategorySelectionBar';
 import type { DownloadJob } from './types';
 import type { DownloadedAuthor } from './nativeArchive';
 
@@ -60,7 +61,7 @@ function formatRecent(value: string) {
   return Number.isNaN(date.getTime()) ? '时间未知' : RECENT_DATE_FORMATTER.format(date);
 }
 
-export function HistoryBrowser({ mode, revision, renderJob, onError, searchQuery, onSearchQueryChange, onDetailBackChange, active = true }: {
+export function HistoryBrowser({ mode, revision, renderJob, onError, searchQuery, onSearchQueryChange, onDetailBackChange, selectionMode = false, selectedTweetIds = new Set<string>(), onStartSelection, onStopSelection, onSelectPage, onAssign, onScopeChange, active = true }: {
   mode: 'authors' | 'search';
   revision: number;
   renderJob: (job: DownloadJob) => ReactNode;
@@ -68,6 +69,13 @@ export function HistoryBrowser({ mode, revision, renderJob, onError, searchQuery
   searchQuery?: string;
   onSearchQueryChange?: (query: string) => void;
   onDetailBackChange?: (handler: (() => boolean) | null) => void;
+  selectionMode?: boolean;
+  selectedTweetIds?: Set<string>;
+  onStartSelection?: () => void;
+  onStopSelection?: () => void;
+  onSelectPage?: (tweetIds: string[]) => void;
+  onAssign?: () => void;
+  onScopeChange?: () => void;
   active?: boolean;
 }) {
   const [localQuery, setLocalQuery] = useState('');
@@ -138,12 +146,13 @@ export function HistoryBrowser({ mode, revision, renderJob, onError, searchQuery
   }, [detail, detailPage, revision, onError]);
 
   useEffect(() => {
-    const handler = detail ? () => { setDetail(null); return true; } : null;
+    const handler = detail ? () => { onScopeChange?.(); setDetail(null); return true; } : null;
     onDetailBackChange?.(handler);
     return () => onDetailBackChange?.(null);
-  }, [detail, onDetailBackChange]);
+  }, [detail, onDetailBackChange, onScopeChange]);
 
   function openAuthor(author: DownloadedAuthor) {
+    onScopeChange?.();
     setDetail(author);
     setDetailPage(0);
     detailScroll.current?.scrollTo(0, 0);
@@ -152,14 +161,17 @@ export function HistoryBrowser({ mode, revision, renderJob, onError, searchQuery
   return <>
     <div className="archive-browser">
       {mode === 'search' && <>
-        <SearchBox value={query} inputRef={searchInput} onChange={(value) => { updateQuery(value); setAuthorPage(0); setPostPage(0); }} />
+        <SearchBox value={query} inputRef={searchInput} onChange={(value) => { onScopeChange?.(); updateQuery(value); setAuthorPage(0); setPostPage(0); }} />
         {!searching && <div className="archive-empty">输入作者名称、@用户名或推文正文开始搜索</div>}
       </>}
       {searching && <section className="archive-result-section" aria-label="推文内容结果">
         <h3>推文内容</h3>
         <p className="archive-result-count">{posts ? `找到 ${posts.total} 条已下载推文` : '正在查找推文…'}</p>
+        <CategorySelectionBar currentTweetIds={[...new Set((posts?.items ?? []).filter((job) => job.status === 'completed').map((job) => job.tweetId))]}
+          selectionMode={selectionMode} selectedCount={selectedTweetIds.size} onStart={onStartSelection ?? (() => undefined)}
+          onStop={onStopSelection ?? (() => undefined)} onSelectPage={onSelectPage ?? (() => undefined)} onAssign={onAssign ?? (() => undefined)} />
         {posts && (posts.items.length
-          ? <div className="job-list archive-post-list">{posts.items.map((job) => <div key={job.id}>{renderJob(job)}</div>)}</div>
+          ? <div className="job-list archive-post-list">{posts.items.map(renderJob)}</div>
           : <EmptyResults searching label="推文" />)}
         {!posts && <ArchiveLoading label="正在加载推文" />}
         {posts && <PageNav page={postPage} total={posts.total} onPage={setPostPage} />}
@@ -182,7 +194,7 @@ export function HistoryBrowser({ mode, revision, renderJob, onError, searchQuery
 
     {detail && <div className="archive-detail-screen" ref={detailScroll} role="region" aria-label={`${detail.authorName}的已下载推文`}>
       <header className="archive-detail-header">
-        <button className="archive-back" type="button" onClick={() => setDetail(null)} aria-label="返回作者列表"><ArrowLeft size={21} /></button>
+        <button className="archive-back" type="button" onClick={() => { onScopeChange?.(); setDetail(null); }} aria-label="返回作者列表"><ArrowLeft size={21} /></button>
         <span>作者的已下载推文</span>
       </header>
       <div className="archive-detail-body">
@@ -191,8 +203,11 @@ export function HistoryBrowser({ mode, revision, renderJob, onError, searchQuery
           <div><h2>{detail.authorName}</h2><p>{detail.username ? `@${detail.username}` : '用户名未知'}</p></div>
         </div>
         <p className="archive-result-count">{detailPosts ? `找到 ${detailPosts.total} 条推文` : '正在查找推文…'}</p>
+        <CategorySelectionBar currentTweetIds={[...new Set((detailPosts?.items ?? []).filter((job) => job.status === 'completed').map((job) => job.tweetId))]}
+          selectionMode={selectionMode} selectedCount={selectedTweetIds.size} onStart={onStartSelection ?? (() => undefined)}
+          onStop={onStopSelection ?? (() => undefined)} onSelectPage={onSelectPage ?? (() => undefined)} onAssign={onAssign ?? (() => undefined)} />
         {detailPosts && (detailPosts.items.length
-          ? <div className="job-list archive-post-list">{detailPosts.items.map((job) => <div key={job.id}>{renderJob(job)}</div>)}</div>
+          ? <div className="job-list archive-post-list">{detailPosts.items.map(renderJob)}</div>
           : <EmptyResults searching={false} label="推文" />)}
         {!detailPosts && <ArchiveLoading label="正在加载作者推文" />}
         {detailPosts && <PageNav page={detailPage} total={detailPosts.total} onPage={(page) => { setDetailPage(page); detailScroll.current?.scrollTo(0, 0); }} />}

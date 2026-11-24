@@ -10,6 +10,13 @@ export interface DownloadedAuthor {
   latestDownloadedAt: string;
 }
 
+export interface TweetCategory {
+  id: string;
+  name: string;
+  createdAt: string;
+  tweetCount: number;
+}
+
 export interface DownloadFolder {
   selected: boolean;
   mode?: 'downloads' | 'folder';
@@ -18,8 +25,14 @@ export interface DownloadFolder {
 
 export interface LocalArchivePlugin {
   listJobs(input?: { historyOffset?: number; historyLimit?: number }): Promise<{ jobs: DownloadJob[]; historyTotal: number; completedToday: number }>;
-  listDownloadedPosts(input: { authorKey?: string; query: string; offset: number; limit: number }): Promise<{ jobs: DownloadJob[]; total: number }>;
+  listDownloadedPosts(input: { authorKey?: string; categoryId?: string; query: string; offset: number; limit: number }): Promise<{ jobs: DownloadJob[]; total: number }>;
   listAuthors(input: { query: string; offset: number; limit: number }): Promise<{ authors: DownloadedAuthor[]; total: number }>;
+  listTweetCategories(): Promise<{ categories: TweetCategory[]; allTotal: number; uncategorizedTotal: number }>;
+  createTweetCategory(input: { name: string }): Promise<TweetCategory>;
+  renameTweetCategory(input: { id: string; name: string }): Promise<TweetCategory>;
+  deleteTweetCategory(input: { id: string }): Promise<{ deleted: boolean }>;
+  getTweetCategoryAssignments(input: { tweetIds: string[] }): Promise<{ assignments: Record<string, string[]> }>;
+  updateTweetCategories(input: { tweetIds: string[]; addCategoryIds: string[]; removeCategoryIds: string[] }): Promise<{ updated: number }>;
   createJobs(input: { urls: string[] }): Promise<{
     created: DownloadJob[];
     duplicates: DownloadJob[];
@@ -39,6 +52,7 @@ export interface LocalArchivePlugin {
   setDownloadPath(input: { path: string }): Promise<DownloadFolder>;
   getDownloadFolder(): Promise<DownloadFolder>;
   addListener(eventName: 'jobsChanged', listenerFunc: () => void): Promise<PluginListenerHandle>;
+  addListener(eventName: 'categoriesChanged', listenerFunc: () => void): Promise<PluginListenerHandle>;
   addListener(eventName: 'sharedContent', listenerFunc: (event: { text: string }) => void): Promise<PluginListenerHandle>;
 }
 

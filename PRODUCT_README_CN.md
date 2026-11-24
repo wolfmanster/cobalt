@@ -82,6 +82,8 @@ pnpm --filter @x-media/client dev
 
 前端开发地址为 `http://127.0.0.1:5173`，Vite 会把 `/api` 代理到业务后端。
 
+iPhone 通过受控私有 HTTPS 使用同一套页面。安装、Service Worker、Range 和反代说明见 [PWA_DEPLOY_CN.md](PWA_DEPLOY_CN.md)。不要把 4100 或 9000 暴露到公网。
+
 ## 业务 API
 
 - `GET /api/health`：业务服务和 Cobalt 状态。

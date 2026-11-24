@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { cancelJob, clearHistory, clearXSession, consumeSharedContent, createJobs, createTweetCategory, deleteTweetCategory, getDownloadFolder, getHealth, getXSessionStatus, listJobs, listTweetCategories, openMedia, readClipboardText, renameTweetCategory, retryJob, selectDownloadFolder, setDownloadPath, startXLogin, subscribeCategoryChanges, subscribeJobs, subscribeServerEvents, subscribeSharedContent, xLoginSupported } from './api';
 import { downloadFolderSupported, isNativeAndroid, mobileShell, usesLocalArchive } from './platform';
+import { subscribeServiceWorkerUpdate } from './pwa-update';
 import type { DownloadJob } from './types';
 import type { TweetCategory } from './nativeArchive';
 
@@ -67,6 +68,8 @@ export default function App() {
   const previousHistoryTotal = useRef<number | null>(null);
   const previousTab = useRef(tab);
   const [searchQuery, setSearchQuery] = useState('');
+  const [offline, setOffline] = useState(!isNativeAndroid && typeof navigator !== 'undefined' && navigator.onLine === false);
+  const [applyUpdate, setApplyUpdate] = useState<(() => void) | null>(null);
   const urls = useMemo(() => extractUrls(input), [input]);
 
   const registerArchiveBackHandler = useCallback((handler: (() => boolean) | null) => {
@@ -341,6 +344,27 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (isNativeAndroid || !('scrollRestoration' in history)) return;
+    const previous = history.scrollRestoration;
+    history.scrollRestoration = 'manual';
+    return () => { history.scrollRestoration = previous; };
+  }, []);
+
+  useEffect(() => {
+    if (isNativeAndroid) return;
+    const show = () => setOffline(true);
+    const hide = () => setOffline(false);
+    window.addEventListener('offline', show);
+    window.addEventListener('online', hide);
+    return () => {
+      window.removeEventListener('offline', show);
+      window.removeEventListener('online', hide);
+    };
+  }, []);
+
+  useEffect(() => subscribeServiceWorkerUpdate((apply) => setApplyUpdate(() => apply)), []);
+
+  useEffect(() => {
     if (isNativeAndroid || !window.visualViewport) return;
     const viewport = window.visualViewport;
     const shell = document.querySelector<HTMLElement>('.app-shell');
@@ -581,6 +605,8 @@ export default function App() {
         choosingFolder={choosingFolder} sessionConfigured={sessionConfigured} sessionBusy={sessionBusy}
         serviceHealthy={serviceHealthy} showAndroidChrome={isNativeAndroid} onFolder={() => setFolderDialogOpen(true)}
         onAccount={() => setShowSessionPanel((visible) => !visible)} />
+      {!isNativeAndroid && offline && <div className="offline-hint" role="status">当前离线，归档仍在服务器</div>}
+      {applyUpdate && <div className="update-hint" role="status">有新版本，刷新后更新<button type="button" onClick={() => applyUpdate()}>刷新</button></div>}
 
       <main id="top" className="native-main">
           <>

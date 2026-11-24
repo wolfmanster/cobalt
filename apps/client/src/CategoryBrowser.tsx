@@ -76,8 +76,11 @@ export function CategoryBrowser({
   }, [categories, selectedCategoryId, onScopeChange]);
 
   useEffect(() => {
-    let live = true;
     setResult(null);
+  }, [selectedCategoryId, debouncedQuery, page]);
+
+  useEffect(() => {
+    let live = true;
     const categoryId = selectedCategoryId === ALL_DOWNLOADED_CATEGORY ? undefined : selectedCategoryId;
     void listDownloadedPosts({ categoryId, query: debouncedQuery, offset: page * PAGE_SIZE, limit: PAGE_SIZE })
       .then((posts) => {

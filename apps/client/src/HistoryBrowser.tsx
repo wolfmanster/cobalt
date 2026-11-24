@@ -101,9 +101,12 @@ export function HistoryBrowser({ mode, revision, renderJob, onError, searchQuery
   useEffect(() => { if (mode === 'search' && active) searchInput.current?.focus(); }, [mode, active]);
 
   useEffect(() => {
+    setPosts(null);
+  }, [mode, query, debouncedQuery, postPage]);
+
+  useEffect(() => {
     if (mode !== 'search') return;
     let live = true;
-    setPosts(null);
     if (!query.trim() || query !== debouncedQuery) return () => { live = false; };
     void listDownloadedPosts({ query: debouncedQuery, offset: postPage * PAGE_SIZE, limit: PAGE_SIZE })
       .then((result) => {
@@ -117,8 +120,11 @@ export function HistoryBrowser({ mode, revision, renderJob, onError, searchQuery
   }, [mode, query, debouncedQuery, postPage, revision, onError]);
 
   useEffect(() => {
+    if (mode === 'search' && (!query.trim() || query !== debouncedQuery)) setAuthors(null);
+  }, [mode, query, debouncedQuery]);
+
+  useEffect(() => {
     let live = true;
-    setAuthors(null);
     if (mode === 'search' && (!query.trim() || query !== debouncedQuery)) return () => { live = false; };
     void listAuthors({ query: mode === 'search' ? debouncedQuery : '', offset: authorPage * PAGE_SIZE, limit: PAGE_SIZE })
       .then((result) => {
@@ -132,9 +138,12 @@ export function HistoryBrowser({ mode, revision, renderJob, onError, searchQuery
   }, [mode, query, debouncedQuery, authorPage, revision, onError]);
 
   useEffect(() => {
+    setDetailPosts(null);
+  }, [detail, detailPage]);
+
+  useEffect(() => {
     if (!detail) return;
     let live = true;
-    setDetailPosts(null);
     void listDownloadedPosts({ authorKey: detail.authorKey, query: '', offset: detailPage * PAGE_SIZE, limit: PAGE_SIZE })
       .then((result) => {
         if (!live) return;

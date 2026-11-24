@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Check, CircleAlert, Clock3, FolderOpen, Image as ImageIcon, LoaderCircle, Play, RotateCcw, Tags, Video, X } from 'lucide-react';
 import { xLoginSupported } from '../api';
 import type { DownloadJob, JobStatus, MediaItem } from '../types';
@@ -21,7 +21,45 @@ function statusIcon(status: JobStatus) {
   return <Clock3 size={13} />;
 }
 
-export function JobCard({ job, onAction, onOpenMedia, onPreviewMedia, presentation = 'queue', onClassify, selectionMode = false, selected = false, onToggleSelection }: { job: DownloadJob; onAction: (action: 'cancel' | 'retry', id: string) => void; onOpenMedia: (id: string) => void; onPreviewMedia: (media: MediaItem[], index: number) => void; presentation?: 'queue' | 'history'; onClassify?: (tweetId: string) => void; selectionMode?: boolean; selected?: boolean; onToggleSelection?: (tweetId: string) => void }) {
+function sharePayload(media: MediaItem) {
+  return { url: new URL(media.downloadUrl, window.location.href).href, title: media.filename };
+}
+
+function shareOffered(media: MediaItem) {
+  if (!media.downloadUrl || typeof navigator.share !== 'function') return false;
+  if (typeof navigator.canShare !== 'function') return true;
+  try {
+    return navigator.canShare(sharePayload(media));
+  } catch {
+    return false;
+  }
+}
+
+function SaveLink({ media, className, children }: { media: MediaItem; className?: string; children: ReactNode }) {
+  return <a className={className} href={media.downloadUrl} download={media.filename} rel="noopener">{children}</a>;
+}
+
+function ShareButton({ media, onNotice }: { media: MediaItem; onNotice?: (message: string) => void }) {
+  if (!shareOffered(media)) return null;
+  return <button type="button" className="text-button" onClick={() => {
+    const payload = sharePayload(media);
+    if (typeof navigator.canShare === 'function') {
+      try {
+        if (!navigator.canShare(payload)) return;
+      } catch {
+        return;
+      }
+    }
+    const share = navigator.share?.bind(navigator);
+    if (!share) return;
+    void share(payload).catch((error: unknown) => {
+      if (error instanceof DOMException && error.name === 'AbortError') return;
+      onNotice?.('分享失败，请改用保存');
+    });
+  }}>分享</button>;
+}
+
+export function JobCard({ job, onAction, onOpenMedia, onPreviewMedia, presentation = 'queue', onClassify, selectionMode = false, selected = false, onToggleSelection, onNotice }: { job: DownloadJob; onAction: (action: 'cancel' | 'retry', id: string) => void; onOpenMedia: (id: string) => void; onPreviewMedia: (media: MediaItem[], index: number) => void; presentation?: 'queue' | 'history'; onClassify?: (tweetId: string) => void; selectionMode?: boolean; selected?: boolean; onToggleSelection?: (tweetId: string) => void; onNotice?: (message: string) => void }) {
   const [avatarFailed, setAvatarFailed] = useState(false);
   const [activeMediaIndex, setActiveMediaIndex] = useState(0);
   const [mediaAspectRatios, setMediaAspectRatios] = useState<Record<string, number>>({});
@@ -130,13 +168,13 @@ export function JobCard({ job, onAction, onOpenMedia, onPreviewMedia, presentati
           <span className={`status ${STATUS[job.status].className}`}>
             {statusIcon(job.status)} {STATUS[job.status].label}
           </span>
-          {historical && complete && job.media.length > 0 && <button
+          {historical && complete && job.media.length > 0 && (xLoginSupported ? <button
             type="button"
             className="history-open-media"
             title={`打开 ${job.media[activeMediaIndex]?.filename ?? job.media[0].filename}`}
             aria-label={`打开 ${job.media[activeMediaIndex]?.filename ?? job.media[0].filename}`}
             onClick={() => onOpenMedia(job.media[activeMediaIndex]?.id ?? job.media[0].id)}
-          ><FolderOpen size={20} /></button>}
+          ><FolderOpen size={20} /></button> : <span className="history-save-actions">{activeMedia && <SaveLink media={activeMedia} className="text-button">保存</SaveLink>}{activeMedia && <ShareButton media={activeMedia} onNotice={onNotice} />}</span>)}
         </div>
 
         {job.metadata?.text && <p className="post-text">{job.metadata.text}</p>}
@@ -186,7 +224,8 @@ export function JobCard({ job, onAction, onOpenMedia, onPreviewMedia, presentati
                       : preview}
                     {!historical && !xLoginSupported && <div className="media-caption">
                       <span>{media.kind === 'video' ? <Video size={13} /> : <ImageIcon size={13} />}{media.filename}</span>
-                      <button type="button" title={`打开 ${media.filename}`} aria-label={`打开 ${media.filename}`} onClick={() => onOpenMedia(media.id)}><FolderOpen size={15} /></button>
+                      <SaveLink media={media} className="text-button">保存</SaveLink>
+                      <ShareButton media={media} onNotice={onNotice} />
                     </div>}
                   </div>;
                 })}
@@ -216,7 +255,9 @@ export function JobCard({ job, onAction, onOpenMedia, onPreviewMedia, presentati
         <div className="job-actions">
           {active && <button className="text-button danger-text" onClick={() => onAction('cancel', job.id)}><X size={15} />取消</button>}
           {(job.status === 'failed' || job.status === 'canceled') && <button className="text-button" onClick={() => onAction('retry', job.id)}><RotateCcw size={14} />重试</button>}
-          {complete && job.media.length === 1 && !historical && <button type="button" className="text-button" onClick={() => onOpenMedia(job.media[0].id)}><FolderOpen size={15} />打开文件</button>}
+          {complete && job.media.length === 1 && !historical && (xLoginSupported
+            ? <button type="button" className="text-button" onClick={() => onOpenMedia(job.media[0].id)}><FolderOpen size={15} />打开文件</button>
+            : <><SaveLink media={job.media[0]} className="text-button">保存</SaveLink><ShareButton media={job.media[0]} onNotice={onNotice} /></>)}
         </div>
       </footer>}
     </article>

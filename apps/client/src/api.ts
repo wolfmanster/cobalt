@@ -137,9 +137,17 @@ export async function readClipboardText() {
   }
 }
 
-export function openMedia(id: string) {
-  if (native) return LocalArchive.openMedia({ id });
-  window.open(`/api/jobs/media/${id}`, '_blank', 'noopener');
+export function openMedia(input: { id: string; downloadUrl?: string; jobId?: string }) {
+  if (native) return LocalArchive.openMedia({ id: input.id });
+  const href = input.downloadUrl || (input.jobId ? `/api/jobs/${input.jobId}/media/${input.id}?download=1` : '');
+  if (!href) return Promise.reject(new Error('无法打开媒体文件'));
+  const link = document.createElement('a');
+  link.href = href;
+  link.rel = 'noopener';
+  if (input.downloadUrl || input.jobId) link.download = '';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
   return Promise.resolve();
 }
 

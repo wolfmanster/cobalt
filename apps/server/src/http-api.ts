@@ -9,6 +9,7 @@ import { z } from 'zod';
 import { listAuthors, listCategorySummaries, listDownloadedPosts, parsePage } from './archive-query.js';
 import { ArchiveError, CategoryStore, type StoredCategory } from './categories.js';
 import { jobList } from './job-list.js';
+import { streamJobMedia } from './media-stream.js';
 import { DownloadQueue } from './queue.js';
 import { JobStore } from './store.js';
 import { parseXPostUrl } from './x-url.js';
@@ -237,18 +238,14 @@ export async function createApp(options: { dataDir?: string; clientDist?: string
     }
   });
 
-  app.get('/api/jobs/:jobId/media/:mediaId', async (req, res) => {
-    const job = store.get(String(req.params.jobId));
-    const media = job?.media.find((item) => item.id === String(req.params.mediaId));
-    if (!job || !media?.localPath || job.status !== 'completed') return res.status(404).json({ error: '媒体尚不可用' });
-    const filePath = path.resolve(store.dataDir, media.localPath);
-    if (!filePath.startsWith(`${path.resolve(store.mediaDir)}${path.sep}`) || !fs.existsSync(filePath)) {
-      return res.status(404).json({ error: '媒体文件不存在' });
-    }
-    res.setHeader('Content-Type', media.contentType ?? 'application/octet-stream');
-    res.setHeader('Cache-Control', 'private, max-age=3600');
-    if (req.query.download === '1') res.setHeader('Content-Disposition', `attachment; filename="${media.filename}"`);
-    return fs.createReadStream(filePath).pipe(res);
+  app.get('/api/jobs/:jobId/media/:mediaId', (req, res, next) => {
+    void streamJobMedia(req, res, {
+      dataDir: store.dataDir,
+      mediaDir: store.mediaDir,
+      job: store.get(String(req.params.jobId)),
+      mediaId: String(req.params.mediaId),
+      download: req.query.download === '1',
+    }).catch(next);
   });
 
   app.get('/api/events', (req, res) => {

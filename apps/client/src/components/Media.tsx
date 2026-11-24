@@ -8,7 +8,8 @@ function revealVideoPreview(video: HTMLVideoElement) {
 
 export function MediaPreview({ media, onAspectRatio, controls = true, loading = 'lazy' }: { media: MediaItem; onAspectRatio?: (ratio: number) => void; controls?: boolean; loading?: 'lazy' | 'eager' }) {
   const previewUrl = Capacitor.convertFileSrc(media.previewUrl);
-  if (media.kind === 'image' || media.kind === 'gif') {
+  const gifPlaysAsVideo = media.kind === 'gif' && (media.contentType ?? '').startsWith('video/');
+  if ((media.kind === 'image' || media.kind === 'gif') && !gifPlaysAsVideo) {
     return <img src={previewUrl} alt={media.filename} loading={loading} onLoad={(event) => {
       const image = event.currentTarget;
       if (image.naturalWidth && image.naturalHeight) onAspectRatio?.(image.naturalWidth / image.naturalHeight);

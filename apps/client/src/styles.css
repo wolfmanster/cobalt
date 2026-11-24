@@ -301,7 +301,7 @@ main { width: min(1120px, calc(100% - 56px)); margin: 0 auto; }
 .media-caption a, .media-caption button { width: 30px; height: 30px; border: 0; border-radius: 50%; display: grid; place-items: center; flex: none; color: var(--primary); background: var(--primary-soft); cursor: pointer; }
 .job-footer { min-height: 50px; padding: 0 18px 0 78px; border-top: 1px solid var(--outline); display: flex; align-items: center; justify-content: space-between; color: var(--muted); font: 500 9px ui-monospace, SFMono-Regular, Consolas, monospace; background: rgba(242,239,248,.5); }
 .job-actions { display: flex; align-items: center; gap: 8px; }
-.text-button { min-height: 34px; padding: 0 9px; border: 0; border-radius: 10px; display: flex; align-items: center; gap: 5px; color: var(--primary-strong); background: transparent; font-family: inherit; font-size: 10px; font-weight: 800; cursor: pointer; }
+.text-button { min-height: 34px; padding: 0 9px; border: 0; border-radius: 10px; display: flex; align-items: center; gap: 5px; color: var(--primary-strong); background: transparent; font-family: inherit; font-size: 10px; font-weight: 800; cursor: pointer; text-decoration: none; }
 .text-button:hover { background: var(--primary-soft); }
 .danger-text { color: var(--danger); }
 .empty-state { min-height: 280px; margin-top: 18px; border: 1px dashed #cec7d8; border-radius: 26px; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--muted); background: rgba(255,250,255,.42); text-align: center; }
@@ -813,6 +813,7 @@ main { width: min(1120px, calc(100% - 56px)); margin: 0 auto; }
 .job-card.is-history-post .author-name { max-width: none; color: #0f1419; font-size: 14px; }
 .job-card.is-history-post .author-name span { display: inline; margin-left: 4px; color: #536471; font-size: 13px; font-weight: 400; }
 .job-card.is-history-post .history-open-media { width: 44px; height: 44px; margin: 0 0 0 auto; border: 0; border-radius: 50%; display: grid; place-items: center; flex: none; color: #1d9bf0; background: #e8f5fd; cursor: pointer; }
+.history-save-actions { margin-left: auto; display: flex; align-items: center; gap: 4px; flex: none; }
 .job-card.is-history-post .history-open-media:active { background: #d7eefa; }
 .job-card.is-history-post .post-meta { margin-top: 3px; gap: 0; color: #536471; font-family: inherit; font-size: 12px; font-weight: 400; line-height: 1.4; }
 .job-card.is-history-post .status { height: 24px; padding: 0 8px; font-size: 10px; }

@@ -293,7 +293,7 @@ export default function App() {
 
   async function openJobMedia(id: string) {
     try {
-      await openMedia(id);
+      await openMedia({ id });
     } catch (error) {
       setNotice(error instanceof Error ? error.message : '无法打开媒体文件');
     }
@@ -426,7 +426,7 @@ export default function App() {
   }
 
   function renderHistoryJob(job: DownloadJob) {
-    return <JobCard key={job.id} job={job} onAction={action} onOpenMedia={(id) => void openJobMedia(id)} onPreviewMedia={mediaViewer.open} presentation="history"
+    return <JobCard key={job.id} job={job} onAction={action} onOpenMedia={(id) => void openJobMedia(id)} onPreviewMedia={mediaViewer.open} onNotice={setNotice} presentation="history"
       onClassify={(tweetId) => openCategoryPanel([tweetId])} selectionMode={selectionMode}
       selected={selectedTweetIds.has(job.tweetId)} onToggleSelection={toggleSelectedTweet} />;
   }
@@ -529,7 +529,7 @@ export default function App() {
                 <section className="workspace">
                   <div className="workspace-head"><div className="workspace-title"><h2>进行中的任务</h2><p>下载状态会自动更新</p></div></div>
                   {activeJobs.length ? (
-                    <div className="job-list">{activeJobs.map((job) => <JobCard key={job.id} job={job} onAction={action} onOpenMedia={(id) => void openJobMedia(id)} onPreviewMedia={mediaViewer.open} />)}</div>
+                    <div className="job-list">{activeJobs.map((job) => <JobCard key={job.id} job={job} onAction={action} onOpenMedia={(id) => void openJobMedia(id)} onPreviewMedia={mediaViewer.open} onNotice={setNotice} />)}</div>
                   ) : (
                     <div className="empty-state">
                       <span><Pause size={25} /></span>
@@ -621,7 +621,7 @@ export default function App() {
               </div>}
               {visibleJobs.length ? (
                 <>
-                  <div className={`job-list ${tab === 'history' ? 'history-post-list' : ''}`}>{visibleJobs.map((job) => <JobCard key={job.id} job={job} onAction={action} onOpenMedia={(id) => void openJobMedia(id)} onPreviewMedia={mediaViewer.open} presentation={tab === 'history' ? 'history' : 'queue'} />)}</div>
+                  <div className={`job-list ${tab === 'history' ? 'history-post-list' : ''}`}>{visibleJobs.map((job) => <JobCard key={job.id} job={job} onAction={action} onOpenMedia={(id) => void openJobMedia(id)} onPreviewMedia={mediaViewer.open} onNotice={setNotice} presentation={tab === 'history' ? 'history' : 'queue'} />)}</div>
                   {tab === 'history' && historyTotal > HISTORY_PAGE_SIZE && <nav className="history-pagination" aria-label="下载历史分页">
                     <button onClick={() => showHistoryPage(historyPage - 1)} disabled={historyPage === 0}>上一页</button>
                     <span>第 {historyPage + 1} / {Math.ceil(historyTotal / HISTORY_PAGE_SIZE)} 页</span>

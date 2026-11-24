@@ -13,23 +13,16 @@ import { HistoryMediaViewer } from './components/HistoryMediaViewer';
 import { useMediaViewer } from './hooks/useMediaViewer';
 import { extractUrls } from './lib/format';
 import {
-  Archive,
-  ArrowDownToLine,
-  Check,
   CircleAlert,
-  FolderCheck,
-  FolderOpen,
-  Home,
   History,
   Link2,
   LoaderCircle,
   Pause,
-  Search,
-  ShieldCheck,
   Trash2,
   X,
 } from 'lucide-react';
-import { cancelJob, clearHistory, clearXSession, consumeSharedContent, createJobs, createTweetCategory, deleteTweetCategory, getDownloadFolder, getHealth, getXSessionStatus, listJobs, listTweetCategories, openMedia, readClipboardText, renameTweetCategory, retryJob, selectDownloadFolder, setDownloadPath, startXLogin, subscribeCategoryChanges, subscribeJobs, subscribeSharedContent, xLoginSupported } from './api';
+import { cancelJob, clearHistory, clearXSession, consumeSharedContent, createJobs, createTweetCategory, deleteTweetCategory, getDownloadFolder, getHealth, getXSessionStatus, listJobs, listTweetCategories, openMedia, readClipboardText, renameTweetCategory, retryJob, selectDownloadFolder, setDownloadPath, startXLogin, subscribeCategoryChanges, subscribeJobs, subscribeServerEvents, subscribeSharedContent, xLoginSupported } from './api';
+import { downloadFolderSupported, isNativeAndroid, mobileShell, usesLocalArchive } from './platform';
 import type { DownloadJob } from './types';
 import type { TweetCategory } from './nativeArchive';
 
@@ -81,7 +74,7 @@ export default function App() {
   }, []);
 
   const loadJobs = useMemo(() => createJobRefresh(listJobs, HISTORY_PAGE_SIZE, (result, page) => {
-    if (xLoginSupported && previousHistoryTotal.current !== null && previousHistoryTotal.current !== result.historyTotal) {
+    if (previousHistoryTotal.current !== null && previousHistoryTotal.current !== result.historyTotal) {
       setArchiveRevision((current) => current + 1);
     }
     previousHistoryTotal.current = result.historyTotal;
@@ -93,7 +86,6 @@ export default function App() {
   }), []);
   const refreshJobs = useCallback(() => loadJobs(historyPageRef.current), [loadJobs]);
   const refreshCategories = useCallback(async () => {
-    if (!xLoginSupported) return;
     const result = await listTweetCategories();
     setCategories(result.categories);
     setAllDownloadedCount(result.allTotal);
@@ -102,9 +94,13 @@ export default function App() {
 
   const submitUrls = useCallback(async (requestedUrls: string[]) => {
     if (!requestedUrls.length) return;
+    if (requestedUrls.length > 200) {
+      setNotice('每批最多 200 条');
+      return;
+    }
     setSubmitting(true);
     try {
-      if (!(await getDownloadFolder()).selected) {
+      if (downloadFolderSupported && !(await getDownloadFolder()).selected) {
         setFolderDialogOpen(true);
         setNotice('请先重新设置下载位置');
         return;
@@ -135,28 +131,39 @@ export default function App() {
 
   useEffect(() => {
     void refreshJobs().catch((error) => setNotice(error.message));
-    void getDownloadFolder().then((result) => {
-      setFolderReady(result.selected);
-      if (result.label) {
-        setFolderLabel(result.label);
-        if (result.mode === 'downloads') setDownloadSubfolder(result.label.replace(/^Download\/?/, ''));
-      }
-    }).catch(() => undefined);
+    if (downloadFolderSupported) {
+      void getDownloadFolder().then((result) => {
+        setFolderReady(result.selected);
+        if (result.label) {
+          setFolderLabel(result.label);
+          if (result.mode === 'downloads') setDownloadSubfolder(result.label.replace(/^Download\/?/, ''));
+        }
+      }).catch(() => undefined);
+    }
     if (xLoginSupported) {
       void getXSessionStatus().then((result) => setSessionConfigured(result.configured)).catch(() => undefined);
     }
-    const events = subscribeJobs(() => { void refreshJobs().catch((error) => setNotice(error.message)); });
-    const shared = subscribeSharedContent((text) => {
-      void receiveSharedContent(text);
+    if (usesLocalArchive) {
+      const events = subscribeJobs(() => { void refreshJobs().catch((error) => setNotice(error.message)); });
+      const shared = subscribeSharedContent((text) => {
+        void receiveSharedContent(text);
+      });
+      void consumeSharedContent().then((result) => {
+        if (result.text) void receiveSharedContent(result.text);
+      });
+      return () => { void events.close(); void shared.close(); };
+    }
+    void refreshCategories().catch((error) => setNotice(error instanceof Error ? error.message : '无法读取分类'));
+    const events = subscribeServerEvents(() => {
+      void refreshJobs().catch((error) => setNotice(error.message));
+      void refreshCategories().catch((error) => setNotice(error instanceof Error ? error.message : '无法刷新分类'));
+      setArchiveRevision((current) => current + 1);
     });
-    void consumeSharedContent().then((result) => {
-      if (result.text) void receiveSharedContent(result.text);
-    });
-    return () => { void events.close(); void shared.close(); };
-  }, [receiveSharedContent, refreshJobs]);
+    return () => { void events.close(); };
+  }, [receiveSharedContent, refreshCategories, refreshJobs]);
 
   useEffect(() => {
-    if (!xLoginSupported) return;
+    if (!usesLocalArchive) return;
     void refreshCategories().catch((error) => setNotice(error instanceof Error ? error.message : '无法读取分类'));
     const events = subscribeCategoryChanges(() => {
       setArchiveRevision((current) => current + 1);
@@ -173,13 +180,13 @@ export default function App() {
   }, [notice]);
 
   useEffect(() => {
-    if (!xLoginSupported) return;
+    if (!mobileShell) return;
     if (previousTab.current !== tab) window.scrollTo({ top: 0, behavior: 'auto' });
     previousTab.current = tab;
   }, [tab]);
 
   useEffect(() => {
-    if (!xLoginSupported) return;
+    if (!isNativeAndroid) return;
     const browserWindow = window as Window & { __cobaltGoBack?: () => boolean };
     const handleBack = () => {
       if (categoryTargets !== null) {
@@ -224,12 +231,103 @@ export default function App() {
     };
   }, [categoryTargets, categoryNameDialogOpen, categoryToDelete, selectionMode, clearConfirmationOpen, folderDialogOpen, showSessionPanel, tab, mediaViewer.closeIfOpen]);
 
+  const authorDetailSources = useRef(new Map<string, boolean>());
+  const [authorDetailOpen, setAuthorDetailOpen] = useState(false);
+  const noteAuthorDetail = useCallback((source: string, open: boolean) => {
+    authorDetailSources.current.set(source, open);
+    const anyOpen = [...authorDetailSources.current.values()].some(Boolean);
+    setAuthorDetailOpen((current) => current === anyOpen ? current : anyOpen);
+  }, []);
+  const noteSearchAuthorDetail = useCallback((open: boolean) => noteAuthorDetail('search', open), [noteAuthorDetail]);
+  const noteAuthorsAuthorDetail = useCallback((open: boolean) => noteAuthorDetail('authors', open), [noteAuthorDetail]);
+  const closeBrowserLayer = useCallback(() => {
+    if (categoryTargets !== null) {
+      setCategoryTargets(null);
+      return true;
+    }
+    if (categoryNameDialogOpen || categoryToDelete !== null) {
+      setCategoryNameDialogOpen(false);
+      setCategoryToRename(null);
+      setCategoryToDelete(null);
+      return true;
+    }
+    if (selectionMode) {
+      setSelectionMode(false);
+      setSelectedTweetIds(new Set());
+      return true;
+    }
+    if (clearConfirmationOpen) {
+      setClearConfirmationOpen(false);
+      return true;
+    }
+    if (mediaViewer.closeIfOpen()) return true;
+    if (archiveBackHandler.current?.()) return true;
+    if (tab !== 'queue') {
+      setTab('queue');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return true;
+    }
+    return false;
+  }, [categoryTargets, categoryNameDialogOpen, categoryToDelete, selectionMode, clearConfirmationOpen, tab, mediaViewer.closeIfOpen]);
+  const browserLayers = useCallback(() => {
+    const layers: string[] = [];
+    if (tab !== 'queue') layers.push(`tab:${tab}`);
+    if (authorDetailOpen) layers.push('author');
+    if (mediaViewer.preview) layers.push('preview');
+    if (clearConfirmationOpen) layers.push('clear');
+    if (selectionMode) layers.push('select');
+    if (categoryNameDialogOpen || categoryToDelete) layers.push('name');
+    if (categoryTargets) layers.push('assign');
+    return layers;
+  }, [tab, authorDetailOpen, mediaViewer.preview, clearConfirmationOpen, selectionMode, categoryNameDialogOpen, categoryToDelete, categoryTargets]);
+  const layerStack = useRef<string[]>([]);
+  const popGuard = useRef(false);
+  useEffect(() => {
+    if (isNativeAndroid) return;
+    const onPop = () => {
+      if (popGuard.current) {
+        popGuard.current = false;
+        return;
+      }
+      popGuard.current = true;
+      if (!closeBrowserLayer()) popGuard.current = false;
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, [closeBrowserLayer]);
+  useEffect(() => {
+    if (isNativeAndroid) return;
+    const next = browserLayers();
+    const previous = layerStack.current;
+    if (popGuard.current) {
+      popGuard.current = false;
+      layerStack.current = next;
+      return;
+    }
+    if (next.length === previous.length && next.every((item, index) => item === previous[index])) return;
+    const grew = next.length > previous.length && previous.every((item, index) => next[index] === item);
+    if (grew) {
+      for (let index = previous.length; index < next.length; index += 1) history.pushState({ veoLayer: next[index] }, '');
+      layerStack.current = next;
+      return;
+    }
+    const shrank = previous.length > next.length && next.every((item, index) => item === previous[index]);
+    if (shrank) {
+      popGuard.current = true;
+      layerStack.current = next;
+      history.go(next.length - previous.length);
+      return;
+    }
+    if (previous.length === next.length && next.length > 0) history.replaceState({ veoLayer: next[next.length - 1] }, '');
+    layerStack.current = next;
+  }, [browserLayers]);
+
   useEffect(() => {
     let disposed = false;
     const refreshHealth = async () => {
       try {
         const health = await getHealth();
-        if (!disposed) setServiceHealthy(health.ok && health.local);
+        if (!disposed) setServiceHealthy(usesLocalArchive ? Boolean(health.ok && health.local) : Boolean(health.ok && health.cobalt));
       } catch {
         if (!disposed) setServiceHealthy(false);
       }
@@ -239,6 +337,25 @@ export default function App() {
     return () => {
       disposed = true;
       window.clearInterval(interval);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (isNativeAndroid || !window.visualViewport) return;
+    const viewport = window.visualViewport;
+    const shell = document.querySelector<HTMLElement>('.app-shell');
+    const apply = () => {
+      const overlap = Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop);
+      shell?.style.setProperty('--keyboard-overlap', `${overlap}px`);
+      const active = document.activeElement;
+      if (active instanceof HTMLTextAreaElement) active.scrollIntoView({ block: 'nearest' });
+    };
+    viewport.addEventListener('resize', apply);
+    viewport.addEventListener('scroll', apply);
+    return () => {
+      viewport.removeEventListener('resize', apply);
+      viewport.removeEventListener('scroll', apply);
+      shell?.style.removeProperty('--keyboard-overlap');
     };
   }, []);
 
@@ -275,10 +392,8 @@ export default function App() {
       historyPageRef.current = 0;
       setHistoryPage(0);
       await refreshJobs();
-      if (xLoginSupported) {
-        setArchiveRevision((current) => current + 1);
-        await refreshCategories();
-      }
+      setArchiveRevision((current) => current + 1);
+      await refreshCategories();
       setNotice(`已清除 ${removed} 条历史记录`);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : '无法清除历史记录');
@@ -318,20 +433,13 @@ export default function App() {
 
   const activeJobs = jobs.filter((job) => ['queued', 'resolving', 'downloading'].includes(job.status));
   const historyJobs = jobs.filter((job) => ['completed', 'failed', 'canceled'].includes(job.status));
-  const visibleJobs = tab === 'queue' ? activeJobs : historyJobs;
 
   function openComposer() {
-    if (xLoginSupported) {
-      setTab('queue');
-      requestAnimationFrame(() => {
-        document.querySelector<HTMLElement>('.native-ingest-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        textareaRef.current?.focus({ preventScroll: true });
-      });
-    } else {
-      const panel = document.querySelector<HTMLElement>('.ingest-panel');
-      panel?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      textareaRef.current?.blur();
-    }
+    setTab('queue');
+    requestAnimationFrame(() => {
+      document.querySelector<HTMLElement>('.native-ingest-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      textareaRef.current?.focus({ preventScroll: true });
+    });
     void readClipboardText().then((clipboardText) => {
       const value = clipboardText.trim();
       if (value) setInput((current) => current.trim() ? `${current.trim()}\n${value}` : value);
@@ -434,8 +542,7 @@ export default function App() {
   function jumpToTab(nextTab: 'queue' | 'history' | 'search') {
     clearSelection();
     setTab(nextTab);
-    if (xLoginSupported) window.scrollTo({ top: 0, behavior: 'smooth' });
-    else document.querySelector('.workspace')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
   async function saveDownloadSubfolder() {
@@ -453,13 +560,6 @@ export default function App() {
     }
   }
 
-  function jumpHome() {
-    clearSelection();
-    setTab('queue');
-    if (xLoginSupported) window.scrollTo({ top: 0, behavior: 'smooth' });
-    else document.querySelector('#top')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }
-
   function showHistoryPage(page: number) {
     const lastPage = Math.max(0, Math.ceil(historyTotal / HISTORY_PAGE_SIZE) - 1);
     const nextPage = Math.min(Math.max(page, 0), lastPage);
@@ -467,7 +567,7 @@ export default function App() {
     void refreshJobs().catch((error) => setNotice(error.message));
   }
 
-  const ingestPanel = <LinkComposer native={xLoginSupported} input={input} linkCount={urls.length}
+  const ingestPanel = <LinkComposer mobile={mobileShell} androidSession={xLoginSupported} input={input} linkCount={urls.length}
     submitting={submitting} sessionConfigured={sessionConfigured} textareaRef={textareaRef}
     onInput={setInput} onImport={importFile} onSubmit={() => void submit()} onPaste={openComposer} />;
 
@@ -475,53 +575,16 @@ export default function App() {
     busy={sessionBusy} onConnect={() => void connectX()} onDisconnect={() => void disconnectX()}
     onClose={() => setShowSessionPanel(false)} />;
 
-  const quickStats = (
-    <section className="quick-stats" aria-label="下载统计">
-      <div className="active-stat"><span className="stat-icon"><ArrowDownToLine size={29} /></span><div><span>正在下载</span><strong>{String(activeJobs.length).padStart(2, '0')}</strong></div></div>
-      <div className="complete-stat"><span className="stat-icon"><Check size={31} /></span><div><span>今日完成</span><strong>{String(completedToday).padStart(2, '0')}</strong></div></div>
-    </section>
-  );
-
   return (
-    <div className={`app-shell ${xLoginSupported ? 'is-native' : ''}`}>
-      {xLoginSupported ? <NativeHeader tab={tab} folderReady={folderReady} folderLabel={folderLabel}
+    <div className={`app-shell is-mobile-shell${isNativeAndroid ? ' is-native' : ''}`}>
+      <NativeHeader tab={tab} folderReady={folderReady} folderLabel={folderLabel}
         choosingFolder={choosingFolder} sessionConfigured={sessionConfigured} sessionBusy={sessionBusy}
-        serviceHealthy={serviceHealthy} onFolder={() => setFolderDialogOpen(true)}
-        onAccount={() => setShowSessionPanel((visible) => !visible)} /> : (
-      <header className={`topbar ${tab !== 'queue' ? 'is-compact' : ''}`}>
-        <div className="topbar-actions">
-          {tab === 'queue' && <>
-            <button
-              className={`folder-button ${folderReady ? 'is-ready' : ''}`}
-              type="button"
-              title={`下载位置：${folderLabel}，点击更改`}
-              onClick={() => xLoginSupported ? setFolderDialogOpen(true) : void chooseDownloadFolder()}
-              disabled={choosingFolder}
-            >
-              {choosingFolder ? <LoaderCircle className="spin" size={17} /> : folderReady ? <FolderCheck size={17} /> : <FolderOpen size={17} />}
-              <span>{xLoginSupported ? '下载位置' : folderReady ? '文件夹已设置' : '选择下载文件夹'}</span>
-            </button>
-            <button
-              className={`session-button ${sessionConfigured ? 'is-ready' : ''}`}
-              type="button"
-              title={sessionConfigured ? '管理已保存的 X 登录' : '登录 X 并加密保存 auth_token、ct0'}
-              aria-label={sessionConfigured ? '管理已保存的 X 登录' : '登录 X 并加密保存 auth_token、ct0'}
-              onClick={() => setShowSessionPanel((visible) => !visible)}
-              disabled={sessionBusy}
-            >
-              {sessionBusy ? <LoaderCircle className="spin" size={17} /> : <ShieldCheck size={17} />}
-              <span>{sessionConfigured ? 'X 已登录' : '登录 X'}</span>
-            </button>
-          </>}
-          <div className={`service-state ${serviceHealthy === false ? 'is-offline' : ''}`}><span /> {serviceHealthy === null ? '正在检查本地服务' : serviceHealthy ? '本地服务可用' : '本地服务不可用'}</div>
-        </div>
-      </header>
-      )}
+        serviceHealthy={serviceHealthy} showAndroidChrome={isNativeAndroid} onFolder={() => setFolderDialogOpen(true)}
+        onAccount={() => setShowSessionPanel((visible) => !visible)} />
 
-      <main id="top" className={xLoginSupported ? 'native-main' : ''}>
-        {xLoginSupported ? (
+      <main id="top" className="native-main">
           <>
-            {sessionPanel}
+            {isNativeAndroid && sessionPanel}
             <div className="native-pages">
               <section className={`native-page ${tab === 'queue' ? 'is-current' : ''}`} aria-label="首页">
                 {ingestPanel}
@@ -549,6 +612,7 @@ export default function App() {
                   searchQuery={searchQuery}
                   onSearchQueryChange={setSearchQuery}
                   onDetailBackChange={registerArchiveBackHandler}
+                  onAuthorDetailChange={noteSearchAuthorDetail}
                   selectionMode={selectionMode} selectedTweetIds={selectedTweetIds}
                   onStartSelection={() => setSelectionMode(true)} onStopSelection={clearSelection}
                   onSelectPage={selectCurrentPage} onAssign={() => openCategoryPanel([...selectedTweetIds])}
@@ -573,6 +637,7 @@ export default function App() {
                     mode="authors"
                     revision={archiveRevision}
                     onDetailBackChange={registerArchiveBackHandler}
+                    onAuthorDetailChange={noteAuthorsAuthorDetail}
                     selectionMode={selectionMode} selectedTweetIds={selectedTweetIds}
                     onStartSelection={() => setSelectionMode(true)} onStopSelection={clearSelection}
                     onSelectPage={selectCurrentPage} onAssign={() => openCategoryPanel([...selectedTweetIds])}
@@ -605,68 +670,16 @@ export default function App() {
               </section>
             </div>
           </>
-        ) : (
-          <>
-            {ingestPanel}
-            {sessionPanel}
-            {quickStats}
-            <section className="workspace">
-              <div className="workspace-head">
-                <div className="workspace-title"><span>下载管理</span><h2>{tab === 'queue' ? '正在下载' : tab === 'search' ? '搜索' : '历史记录'}</h2></div>
-                {tab === 'history' && historyTotal > 0 && <button className="clear-button" type="button" onClick={requestClearHistory} disabled={clearing}>{clearing ? <LoaderCircle className="spin" size={15} /> : <Trash2 size={15} />}{clearing ? '正在清除' : '清除'}</button>}
-              </div>
-              {tab !== 'search' && <div className="tabs" role="tablist" aria-label="下载任务筛选">
-                <button role="tab" aria-selected={tab === 'queue'} className={tab === 'queue' ? 'selected' : ''} onClick={() => setTab('queue')}><Archive size={17} />进行中 <span>{activeJobs.length}</span></button>
-                <button role="tab" aria-selected={tab === 'history'} className={tab === 'history' ? 'selected' : ''} onClick={() => setTab('history')}><History size={17} />历史 <span>{historyTotal}</span></button>
-              </div>}
-              {visibleJobs.length ? (
-                <>
-                  <div className={`job-list ${tab === 'history' ? 'history-post-list' : ''}`}>{visibleJobs.map((job) => <JobCard key={job.id} job={job} onAction={action} onOpenMedia={(id) => void openJobMedia(id)} onPreviewMedia={mediaViewer.open} onNotice={setNotice} presentation={tab === 'history' ? 'history' : 'queue'} />)}</div>
-                  {tab === 'history' && historyTotal > HISTORY_PAGE_SIZE && <nav className="history-pagination" aria-label="下载历史分页">
-                    <button onClick={() => showHistoryPage(historyPage - 1)} disabled={historyPage === 0}>上一页</button>
-                    <span>第 {historyPage + 1} / {Math.ceil(historyTotal / HISTORY_PAGE_SIZE)} 页</span>
-                    <button onClick={() => showHistoryPage(historyPage + 1)} disabled={(historyPage + 1) * HISTORY_PAGE_SIZE >= historyTotal}>下一页</button>
-                  </nav>}
-                </>
-              ) : <div className="empty-state">
-                <span>{tab === 'queue' ? <Pause size={25} /> : <History size={25} />}</span>
-                <h3>{tab === 'queue' ? '准备好开始下载' : '这里还很安静'}</h3>
-                <p>{tab === 'queue' ? '添加链接后，下载进度会实时出现在这里。' : '完成、失败或取消的任务都会保留在这里。'}</p>
-                {tab === 'queue' && <button onClick={openComposer}><Link2 size={15} />添加第一个链接</button>}
-              </div>}
-            </section>
-            <section className="privacy-note">
-              <span><ShieldCheck size={19} /></span>
-              <div><strong>{sessionConfigured ? '已启用受保护帖子下载' : '隐私优先'}</strong><small>{sessionConfigured ? '只使用 Keystore 加密的 X 会话，并仅发送给 X' : '无需登录时，不保存或发送任何 X Cookie'}</small></div>
-              <Check size={17} />
-            </section>
-          </>
-        )}
       </main>
 
-      {xLoginSupported && <HistoryMediaViewer viewer={mediaViewer} />}
+      <HistoryMediaViewer viewer={mediaViewer} />
 
-      <footer className="page-footer"><span>媒体由本地服务解析与保存</span><span>{xLoginSupported && sessionConfigured ? 'X 会话经 Android Keystore 加密' : '公开帖子无需登录'}</span></footer>
-      {xLoginSupported ? <NativeNavigation tab={tab} onNavigate={jumpToTab} onCompose={openComposer} /> : (
-      <nav className={`mobile-nav ${xLoginSupported ? 'has-search' : ''}`} aria-label="主导航">
-        <button className={tab === 'queue' ? 'selected' : ''} onClick={jumpHome} aria-current={tab === 'queue' ? 'page' : undefined}>
-          <Home size={21} /><span>首页</span>
-        </button>
-        <button className="mobile-add" onClick={openComposer} aria-label={xLoginSupported ? '新建下载链接' : '添加下载链接'}>
-          <span><Link2 size={21} /></span><small>新建</small>
-        </button>
-        {xLoginSupported && <button className={tab === 'search' ? 'selected' : ''} onClick={() => jumpToTab('search')} aria-current={tab === 'search' ? 'page' : undefined}>
-          <Search size={20} /><span>搜索</span>
-        </button>}
-        <button className={tab === 'history' ? 'selected' : ''} onClick={() => jumpToTab('history')} aria-current={tab === 'history' ? 'page' : undefined}>
-          <History size={20} /><span>历史</span>{historyTotal > 0 && <b>{historyTotal}</b>}
-        </button>
-      </nav>
-      )}
-      {folderDialogOpen && <DownloadFolderDialog subfolder={downloadSubfolder} currentLocation={folderLabel} busy={choosingFolder}
+      <footer className="page-footer"><span>{isNativeAndroid ? '媒体由本地服务解析与保存' : '媒体由服务器归档'}</span><span>{isNativeAndroid && sessionConfigured ? 'X 会话经 Android Keystore 加密' : '公开帖子无需登录'}</span></footer>
+      <NativeNavigation tab={tab} onNavigate={jumpToTab} onCompose={openComposer} />
+      {isNativeAndroid && folderDialogOpen && <DownloadFolderDialog subfolder={downloadSubfolder} currentLocation={folderLabel} busy={choosingFolder}
         onSubfolder={setDownloadSubfolder} onSave={() => void saveDownloadSubfolder()}
         onChoose={() => void chooseDownloadFolder()} onClose={() => setFolderDialogOpen(false)} />}
-      {clearConfirmationOpen && <ClearHistoryDialog busy={clearing} onConfirm={() => void clear()}
+      {clearConfirmationOpen && <ClearHistoryDialog busy={clearing} removesServerArchive={!isNativeAndroid} onConfirm={() => void clear()}
         onClose={() => setClearConfirmationOpen(false)} />}
       {categoryTargets !== null && <TweetCategoryDialog tweetIds={categoryTargets} categories={categories}
         onCreateCategory={onCategoryCreated} onClose={() => setCategoryTargets(null)} onSaved={finishCategoryAssignment} />}

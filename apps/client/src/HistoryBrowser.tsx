@@ -61,7 +61,7 @@ function formatRecent(value: string) {
   return Number.isNaN(date.getTime()) ? '时间未知' : RECENT_DATE_FORMATTER.format(date);
 }
 
-export function HistoryBrowser({ mode, revision, renderJob, onError, searchQuery, onSearchQueryChange, onDetailBackChange, selectionMode = false, selectedTweetIds = new Set<string>(), onStartSelection, onStopSelection, onSelectPage, onAssign, onScopeChange, active = true }: {
+export function HistoryBrowser({ mode, revision, renderJob, onError, searchQuery, onSearchQueryChange, onDetailBackChange, onAuthorDetailChange, selectionMode = false, selectedTweetIds = new Set<string>(), onStartSelection, onStopSelection, onSelectPage, onAssign, onScopeChange, active = true }: {
   mode: 'authors' | 'search';
   revision: number;
   renderJob: (job: DownloadJob) => ReactNode;
@@ -69,6 +69,7 @@ export function HistoryBrowser({ mode, revision, renderJob, onError, searchQuery
   searchQuery?: string;
   onSearchQueryChange?: (query: string) => void;
   onDetailBackChange?: (handler: (() => boolean) | null) => void;
+  onAuthorDetailChange?: (open: boolean) => void;
   selectionMode?: boolean;
   selectedTweetIds?: Set<string>;
   onStartSelection?: () => void;
@@ -148,8 +149,12 @@ export function HistoryBrowser({ mode, revision, renderJob, onError, searchQuery
   useEffect(() => {
     const handler = detail ? () => { onScopeChange?.(); setDetail(null); return true; } : null;
     onDetailBackChange?.(handler);
-    return () => onDetailBackChange?.(null);
-  }, [detail, onDetailBackChange, onScopeChange]);
+    onAuthorDetailChange?.(Boolean(detail));
+    return () => {
+      onDetailBackChange?.(null);
+      onAuthorDetailChange?.(false);
+    };
+  }, [detail, onDetailBackChange, onAuthorDetailChange, onScopeChange]);
 
   function openAuthor(author: DownloadedAuthor) {
     onScopeChange?.();

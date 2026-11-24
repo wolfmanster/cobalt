@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Check, CircleAlert, Clock3, FolderOpen, Image as ImageIcon, LoaderCircle, Play, RotateCcw, Tags, Video, X } from 'lucide-react';
 import { xLoginSupported } from '../api';
+import { mobileShell } from '../platform';
 import type { DownloadJob, JobStatus, MediaItem } from '../types';
 import { formatBytes, formatDate } from '../lib/format';
 import { MediaPagination, MediaPreview } from './Media';
@@ -195,10 +196,10 @@ export function JobCard({ job, onAction, onOpenMedia, onPreviewMedia, presentati
             <div
               className="media-viewport"
               ref={mediaViewportRef}
-              style={!xLoginSupported && activeMediaAspectRatio ? { aspectRatio: `${activeMediaAspectRatio}` } : undefined}
-              onScroll={xLoginSupported ? updateActiveMedia : undefined}
-              onTouchStart={xLoginSupported ? clearPendingMediaSelection : (event) => { touchStartX.current = event.touches[0]?.clientX ?? null; }}
-              onTouchEnd={xLoginSupported ? undefined : (event) => {
+              style={!mobileShell && activeMediaAspectRatio ? { aspectRatio: `${activeMediaAspectRatio}` } : undefined}
+              onScroll={mobileShell ? updateActiveMedia : undefined}
+              onTouchStart={mobileShell ? clearPendingMediaSelection : (event) => { touchStartX.current = event.touches[0]?.clientX ?? null; }}
+              onTouchEnd={mobileShell ? undefined : (event) => {
                 const startX = touchStartX.current;
                 touchStartX.current = null;
                 if (startX === null || job.media.length < 2) return;
@@ -206,34 +207,31 @@ export function JobCard({ job, onAction, onOpenMedia, onPreviewMedia, presentati
                 if (Math.abs(delta) < 40) return;
                 setActiveMediaIndex((index) => Math.max(0, Math.min(job.media.length - 1, index + (delta < 0 ? 1 : -1))));
               }}
-              onTouchCancel={xLoginSupported ? undefined : () => { touchStartX.current = null; }}
+              onTouchCancel={mobileShell ? undefined : () => { touchStartX.current = null; }}
             >
-              <div className="media-track" style={!xLoginSupported ? { transform: `translateX(-${activeMediaIndex * 100}%)` } : undefined}>
+              <div className="media-track" style={!mobileShell ? { transform: `translateX(-${activeMediaIndex * 100}%)` } : undefined}>
                 {job.media.map((media, index) => {
                   const preview = <MediaPreview media={media} controls={!historical} onAspectRatio={(ratio) => {
                       setMediaAspectRatios((current) => current[media.id] === ratio ? current : { ...current, [media.id]: ratio });
                     }} />;
                   return <div className="media-tile" key={media.id}
                     ref={(node) => { mediaTileRefs.current[index] = node; }}
-                    style={xLoginSupported && job.media.length > 1 ? { aspectRatio: `${mediaAspectRatios[media.id] ?? 1}` } : undefined}
+                    style={mobileShell && job.media.length > 1 ? { aspectRatio: `${mediaAspectRatios[media.id] ?? 1}` } : undefined}
                   >
-                    {xLoginSupported && historical
+                    {mobileShell && historical
                       ? <button type="button" className="media-open-preview" aria-label={`预览 ${media.filename}`} onClick={() => onPreviewMedia(job.media, index)}>{preview}{media.kind === 'video' && <span className="media-play-badge" aria-hidden="true"><Play size={21} fill="currentColor" /></span>}</button>
-                      : xLoginSupported && (media.kind === 'image' || media.kind === 'gif')
+                      : mobileShell && xLoginSupported && (media.kind === 'image' || media.kind === 'gif')
                         ? <button type="button" className="media-open-preview" aria-label={`查看 ${media.filename}`} onClick={() => onOpenMedia(media.id)}>{preview}</button>
                       : preview}
-                    {!historical && !xLoginSupported && <div className="media-caption">
-                      <span>{media.kind === 'video' ? <Video size={13} /> : <ImageIcon size={13} />}{media.filename}</span>
-                      <SaveLink media={media} className="text-button">保存</SaveLink>
-                      <ShareButton media={media} onNotice={onNotice} />
-                    </div>}
                   </div>;
                 })}
               </div>
             </div>
-            {!historical && xLoginSupported && activeMedia && <div className="media-caption">
+            {!historical && activeMedia && <div className="media-caption">
               <span>{activeMedia.kind === 'video' ? <Video size={13} /> : <ImageIcon size={13} />}{activeMedia.filename}</span>
-              <button type="button" title={`打开 ${activeMedia.filename}`} aria-label={`打开 ${activeMedia.filename}`} onClick={() => onOpenMedia(activeMedia.id)}><FolderOpen size={15} /></button>
+              {xLoginSupported
+                ? <button type="button" title={`打开 ${activeMedia.filename}`} aria-label={`打开 ${activeMedia.filename}`} onClick={() => onOpenMedia(activeMedia.id)}><FolderOpen size={15} /></button>
+                : <><SaveLink media={activeMedia} className="text-button">保存</SaveLink><ShareButton media={activeMedia} onNotice={onNotice} /></>}
             </div>}
             {job.media.length > 1 && <MediaPagination media={job.media} activeIndex={activeMediaIndex} ariaLabel="选择此推文的媒体文件" unit="个文件" onSelect={showMedia} />}
             {job.media.length > 1 && <span className="media-counter" aria-live="polite">{activeMediaIndex + 1} / {job.media.length}</span>}

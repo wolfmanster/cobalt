@@ -7,18 +7,22 @@ const PAGE_COPY: Record<NativeTab, { title: string; subtitle: string }> = {
   history: { title: '历史记录', subtitle: '已保存的内容，都在这里' },
 };
 
-export function NativeHeader({ tab, folderReady, folderLabel, choosingFolder, sessionConfigured, sessionBusy, serviceHealthy, onFolder, onAccount }: {
+export function NativeHeader({ tab, folderReady, folderLabel, choosingFolder, sessionConfigured, sessionBusy, serviceHealthy, showAndroidChrome, onFolder, onAccount }: {
   tab: NativeTab; folderReady: boolean; folderLabel: string; choosingFolder: boolean;
-  sessionConfigured: boolean; sessionBusy: boolean; serviceHealthy: boolean | null;
+  sessionConfigured: boolean; sessionBusy: boolean; serviceHealthy: boolean | null; showAndroidChrome: boolean;
   onFolder: () => void; onAccount: () => void;
 }) {
   const copy = PAGE_COPY[tab];
-  const serviceLabel = serviceHealthy === null ? '正在检查本地服务' : serviceHealthy ? '本地服务可用' : '本地服务不可用';
+  const serviceLabel = serviceHealthy === null
+    ? (showAndroidChrome ? '正在检查本地服务' : '正在检查服务')
+    : serviceHealthy
+      ? (showAndroidChrome ? '本地服务可用' : '服务可用')
+      : (showAndroidChrome ? '本地服务不可用' : '服务不可用');
   return <header className={`native-header ${tab === 'history' ? 'is-minimal' : ''}`}>
     <div className="native-header-copy">{tab !== 'history' && <h1>{copy.title}</h1>}<p>{copy.subtitle}</p></div>
     <div className="native-header-actions">
       <span className={`native-service-dot ${serviceHealthy === false ? 'is-offline' : serviceHealthy === null ? 'is-checking' : ''}`} role="status" aria-label={serviceLabel} title={serviceLabel} />
-      {tab === 'queue' && <>
+      {showAndroidChrome && tab === 'queue' && <>
       <button type="button" className="native-icon-button" onClick={onFolder} disabled={choosingFolder} title={`下载位置：${folderLabel}`} aria-label="更改下载位置">
         {choosingFolder ? <LoaderCircle className="spin" size={20} /> : folderReady ? <FolderCheck size={20} /> : <FolderOpen size={20} />}
       </button>
@@ -28,7 +32,7 @@ export function NativeHeader({ tab, folderReady, folderLabel, choosingFolder, se
       </button>
       </>}
     </div>
-    {serviceHealthy === false && <div className="native-service-warning" role="status">本地服务暂不可用，请稍后重试</div>}
+    {serviceHealthy === false && <div className="native-service-warning" role="status">{showAndroidChrome ? '本地服务暂不可用，请稍后重试' : '服务暂不可用，请稍后重试'}</div>}
   </header>;
 }
 

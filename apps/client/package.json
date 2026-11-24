@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "test:ui": "node --test tests/native-ui.test.mjs tests/native-categories.test.mjs"
+    "test:ui": "node --test tests/native-ui.test.mjs tests/native-categories.test.mjs && node --experimental-strip-types --test tests/pwa-ui.test.mjs && PWA_BROWSER=webkit node --experimental-strip-types --test tests/pwa-ui.test.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^6.2.1",

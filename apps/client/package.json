@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "test:ui": "node --test tests/native-ui.test.mjs tests/native-categories.test.mjs",
-    "test:pwa": "node --test tests/pwa-sync.test.mjs"
+    "test:pwa": "node --test --test-timeout=60000 tests/pwa-ui.test.mjs tests/pwa-sync.test.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^6.2.1",

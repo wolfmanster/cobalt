@@ -7,5 +7,6 @@
 /artifacts/
 /tmp/
 /project/.gradle/
+/project/.kotlin/
 /project/**/build/
 /project/**/captures/

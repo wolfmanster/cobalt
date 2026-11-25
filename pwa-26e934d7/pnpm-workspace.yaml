@@ -1,5 +1,0 @@
-packages:
-    - "api"
-    - "web"
-    - "apps/*"
-    - "packages/*"

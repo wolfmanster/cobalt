@@ -20,6 +20,51 @@ env:
   GRADLE_VERSION: 9.7.0
 
 jobs:
+  archive:
+    name: Test server and PWA
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install JavaScript dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build and test server and client
+        run: |
+          pnpm build
+          pnpm test
+
+      - name: Install browsers and FFmpeg
+        run: |
+          pnpm --dir apps/client exec playwright install --with-deps chromium webkit
+          sudo apt-get install -y ffmpeg
+
+      - name: Run native bridge and Chromium regressions
+        run: |
+          pnpm --dir apps/client test:ui
+          pnpm --dir apps/client test:pwa
+
+      - name: Run PWA UI regressions in WebKit
+        env:
+          PWA_BROWSER: webkit
+        run: pnpm --dir apps/client exec node --test --test-timeout=60000 tests/pwa-ui.test.mjs
+
   android:
     name: Test and build Android
     runs-on: ubuntu-latest

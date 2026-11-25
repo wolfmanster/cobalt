@@ -70,7 +70,7 @@ pnpm test
 .\start-all.ps1
 ```
 
-共享归档账号与远程 HTTPS 配置见 [双端部署说明](./PWA_DEPLOY_CN.md)。本地回环调试启用 `ARCHIVE_INSECURE_LOOPBACK=1` 后可访问 `http://127.0.0.1:4100`。Cobalt 只监听 `127.0.0.1:9000`，不应直接暴露到公网。
+归档账号、iPhone 主屏幕安装和私有 HTTPS 配置见 [双端部署说明](./PWA_DEPLOY_CN.md)。本地回环调试启用 `ARCHIVE_INSECURE_LOOPBACK=1` 后可访问 `http://127.0.0.1:4100`。
 
 开发模式需要三个终端：
 
@@ -96,7 +96,7 @@ pnpm --filter @x-media/client dev
 
 ## 生产注意事项
 
-- 业务后端默认只监听 `127.0.0.1:4100`；公网使用时应放在 HTTPS 反向代理后。
+- 业务后端默认只监听 `127.0.0.1:4100`。手机通过受控的 HTTPS 反向代理接入。
 - Cobalt 与业务后端应在同一受信网络内，公网不要开放 9000 端口。
 - 若 Cobalt 配置 API key，在 `apps/server/.env` 同时设置 `COBALT_API_KEY`。
 - 归档历史、分类和媒体都保存在 `DATA_DIR`。双端登录后共享同一份服务器归档。

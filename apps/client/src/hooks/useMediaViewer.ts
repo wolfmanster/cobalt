@@ -166,7 +166,15 @@ export function useMediaViewer() {
     return () => {
       document.body.style.overflow = previousOverflow;
       historyPreviewScrollY.current = null;
-      window.scrollTo({ top: scrollY, behavior: 'auto' });
+      const restore = () => {
+        const root = document.documentElement;
+        const previousBehavior = root.style.scrollBehavior;
+        root.style.scrollBehavior = 'auto';
+        window.scrollTo(0, scrollY);
+        root.style.scrollBehavior = previousBehavior;
+      };
+      restore();
+      window.requestAnimationFrame(restore);
     };
   }, [historyPreviewOpen]);
 

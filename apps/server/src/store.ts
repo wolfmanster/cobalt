@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import type { CategoryStore } from './categories.js';
 import type { DownloadJob } from './types.js';
 
 export class JobStore {
@@ -9,7 +10,7 @@ export class JobStore {
   private readonly filePath: string;
   private saveChain = Promise.resolve();
 
-  constructor(dataDir: string) {
+  constructor(dataDir: string, private readonly categories?: CategoryStore) {
     this.dataDir = dataDir;
     this.mediaDir = path.join(dataDir, 'media');
     this.filePath = path.join(dataDir, 'jobs.json');
@@ -81,6 +82,11 @@ export class JobStore {
     }
     this.queueSave();
     await Promise.all(mediaDirectories.map((directory) => fs.rm(directory, { recursive: true, force: true })));
+    await this.flush();
+    if (this.categories) {
+      const completedTweetIds = [...this.jobs.values()].filter((job) => job.status === 'completed').map((job) => job.tweetId);
+      await this.categories.removeOrphanAssignments(completedTweetIds);
+    }
     return count;
   }
 

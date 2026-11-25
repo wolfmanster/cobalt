@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Check, CircleAlert, Clock3, FolderOpen, Image as ImageIcon, LoaderCircle, Play, RotateCcw, Tags, Video, X } from 'lucide-react';
 import { xLoginSupported } from '../api';
+import { mobileShell } from '../platform';
 import type { DownloadJob, JobStatus, MediaItem } from '../types';
 import { formatBytes, formatDate } from '../lib/format';
 import { MediaPagination, MediaPreview } from './Media';
@@ -21,7 +22,45 @@ function statusIcon(status: JobStatus) {
   return <Clock3 size={13} />;
 }
 
-export function JobCard({ job, onAction, onOpenMedia, onPreviewMedia, presentation = 'queue', onClassify, selectionMode = false, selected = false, onToggleSelection }: { job: DownloadJob; onAction: (action: 'cancel' | 'retry', id: string) => void; onOpenMedia: (id: string) => void; onPreviewMedia: (media: MediaItem[], index: number) => void; presentation?: 'queue' | 'history'; onClassify?: (tweetId: string) => void; selectionMode?: boolean; selected?: boolean; onToggleSelection?: (tweetId: string) => void }) {
+function sharePayload(media: MediaItem) {
+  return { url: new URL(media.downloadUrl, window.location.href).href, title: media.filename };
+}
+
+function shareOffered(media: MediaItem) {
+  if (!media.downloadUrl || typeof navigator.share !== 'function') return false;
+  if (typeof navigator.canShare !== 'function') return true;
+  try {
+    return navigator.canShare(sharePayload(media));
+  } catch {
+    return false;
+  }
+}
+
+function SaveLink({ media, className, children }: { media: MediaItem; className?: string; children: ReactNode }) {
+  return <a className={className} href={media.downloadUrl} download={media.filename} rel="noopener">{children}</a>;
+}
+
+function ShareButton({ media, onNotice }: { media: MediaItem; onNotice?: (message: string) => void }) {
+  if (!shareOffered(media)) return null;
+  return <button type="button" className="text-button" onClick={() => {
+    const payload = sharePayload(media);
+    if (typeof navigator.canShare === 'function') {
+      try {
+        if (!navigator.canShare(payload)) return;
+      } catch {
+        return;
+      }
+    }
+    const share = navigator.share?.bind(navigator);
+    if (!share) return;
+    void share(payload).catch((error: unknown) => {
+      if (error instanceof DOMException && error.name === 'AbortError') return;
+      onNotice?.('分享失败，请改用保存');
+    });
+  }}>分享</button>;
+}
+
+export function JobCard({ job, onAction, onOpenMedia, onPreviewMedia, presentation = 'queue', onClassify, selectionMode = false, selected = false, onToggleSelection, onNotice }: { job: DownloadJob; onAction: (action: 'cancel' | 'retry', id: string) => void; onOpenMedia: (media: MediaItem) => void; onPreviewMedia: (media: MediaItem[], index: number) => void; presentation?: 'queue' | 'history'; onClassify?: (tweetId: string) => void; selectionMode?: boolean; selected?: boolean; onToggleSelection?: (tweetId: string) => void; onNotice?: (message: string) => void }) {
   const [avatarFailed, setAvatarFailed] = useState(false);
   const [activeMediaIndex, setActiveMediaIndex] = useState(0);
   const [mediaAspectRatios, setMediaAspectRatios] = useState<Record<string, number>>({});
@@ -130,13 +169,13 @@ export function JobCard({ job, onAction, onOpenMedia, onPreviewMedia, presentati
           <span className={`status ${STATUS[job.status].className}`}>
             {statusIcon(job.status)} {STATUS[job.status].label}
           </span>
-          {historical && complete && job.media.length > 0 && <button
+          {historical && complete && job.media.length > 0 && (xLoginSupported ? <button
             type="button"
             className="history-open-media"
             title={`打开 ${job.media[activeMediaIndex]?.filename ?? job.media[0].filename}`}
             aria-label={`打开 ${job.media[activeMediaIndex]?.filename ?? job.media[0].filename}`}
-            onClick={() => onOpenMedia(job.media[activeMediaIndex]?.id ?? job.media[0].id)}
-          ><FolderOpen size={20} /></button>}
+            onClick={() => onOpenMedia(job.media[activeMediaIndex] ?? job.media[0])}
+          ><FolderOpen size={20} /></button> : <span className="history-save-actions">{activeMedia && <SaveLink media={activeMedia} className="text-button">保存</SaveLink>}{activeMedia && <ShareButton media={activeMedia} onNotice={onNotice} />}</span>)}
         </div>
 
         {job.metadata?.text && <p className="post-text">{job.metadata.text}</p>}
@@ -157,10 +196,10 @@ export function JobCard({ job, onAction, onOpenMedia, onPreviewMedia, presentati
             <div
               className="media-viewport"
               ref={mediaViewportRef}
-              style={!xLoginSupported && activeMediaAspectRatio ? { aspectRatio: `${activeMediaAspectRatio}` } : undefined}
-              onScroll={xLoginSupported ? updateActiveMedia : undefined}
-              onTouchStart={xLoginSupported ? clearPendingMediaSelection : (event) => { touchStartX.current = event.touches[0]?.clientX ?? null; }}
-              onTouchEnd={xLoginSupported ? undefined : (event) => {
+              style={!mobileShell && activeMediaAspectRatio ? { aspectRatio: `${activeMediaAspectRatio}` } : undefined}
+              onScroll={mobileShell ? updateActiveMedia : undefined}
+              onTouchStart={mobileShell ? clearPendingMediaSelection : (event) => { touchStartX.current = event.touches[0]?.clientX ?? null; }}
+              onTouchEnd={mobileShell ? undefined : (event) => {
                 const startX = touchStartX.current;
                 touchStartX.current = null;
                 if (startX === null || job.media.length < 2) return;
@@ -168,33 +207,31 @@ export function JobCard({ job, onAction, onOpenMedia, onPreviewMedia, presentati
                 if (Math.abs(delta) < 40) return;
                 setActiveMediaIndex((index) => Math.max(0, Math.min(job.media.length - 1, index + (delta < 0 ? 1 : -1))));
               }}
-              onTouchCancel={xLoginSupported ? undefined : () => { touchStartX.current = null; }}
+              onTouchCancel={mobileShell ? undefined : () => { touchStartX.current = null; }}
             >
-              <div className="media-track" style={!xLoginSupported ? { transform: `translateX(-${activeMediaIndex * 100}%)` } : undefined}>
+              <div className="media-track" style={!mobileShell ? { transform: `translateX(-${activeMediaIndex * 100}%)` } : undefined}>
                 {job.media.map((media, index) => {
                   const preview = <MediaPreview media={media} controls={!historical} onAspectRatio={(ratio) => {
                       setMediaAspectRatios((current) => current[media.id] === ratio ? current : { ...current, [media.id]: ratio });
                     }} />;
                   return <div className="media-tile" key={media.id}
                     ref={(node) => { mediaTileRefs.current[index] = node; }}
-                    style={xLoginSupported && job.media.length > 1 ? { aspectRatio: `${mediaAspectRatios[media.id] ?? 1}` } : undefined}
+                    style={mobileShell && job.media.length > 1 ? { aspectRatio: `${mediaAspectRatios[media.id] ?? 1}` } : undefined}
                   >
-                    {xLoginSupported && historical
+                    {mobileShell && historical
                       ? <button type="button" className="media-open-preview" aria-label={`预览 ${media.filename}`} onClick={() => onPreviewMedia(job.media, index)}>{preview}{media.kind === 'video' && <span className="media-play-badge" aria-hidden="true"><Play size={21} fill="currentColor" /></span>}</button>
-                      : xLoginSupported && (media.kind === 'image' || media.kind === 'gif')
-                        ? <button type="button" className="media-open-preview" aria-label={`查看 ${media.filename}`} onClick={() => onOpenMedia(media.id)}>{preview}</button>
+                      : mobileShell && xLoginSupported && (media.kind === 'image' || media.kind === 'gif')
+                        ? <button type="button" className="media-open-preview" aria-label={`查看 ${media.filename}`} onClick={() => onOpenMedia(media)}>{preview}</button>
                       : preview}
-                    {!historical && !xLoginSupported && <div className="media-caption">
-                      <span>{media.kind === 'video' ? <Video size={13} /> : <ImageIcon size={13} />}{media.filename}</span>
-                      <button type="button" title={`打开 ${media.filename}`} aria-label={`打开 ${media.filename}`} onClick={() => onOpenMedia(media.id)}><FolderOpen size={15} /></button>
-                    </div>}
                   </div>;
                 })}
               </div>
             </div>
-            {!historical && xLoginSupported && activeMedia && <div className="media-caption">
+            {!historical && activeMedia && <div className="media-caption">
               <span>{activeMedia.kind === 'video' ? <Video size={13} /> : <ImageIcon size={13} />}{activeMedia.filename}</span>
-              <button type="button" title={`打开 ${activeMedia.filename}`} aria-label={`打开 ${activeMedia.filename}`} onClick={() => onOpenMedia(activeMedia.id)}><FolderOpen size={15} /></button>
+              {xLoginSupported
+                ? <button type="button" title={`打开 ${activeMedia.filename}`} aria-label={`打开 ${activeMedia.filename}`} onClick={() => onOpenMedia(activeMedia)}><FolderOpen size={15} /></button>
+                : <><SaveLink media={activeMedia} className="text-button">保存</SaveLink><ShareButton media={activeMedia} onNotice={onNotice} /></>}
             </div>}
             {job.media.length > 1 && <MediaPagination media={job.media} activeIndex={activeMediaIndex} ariaLabel="选择此推文的媒体文件" unit="个文件" onSelect={showMedia} />}
             {job.media.length > 1 && <span className="media-counter" aria-live="polite">{activeMediaIndex + 1} / {job.media.length}</span>}
@@ -216,7 +253,9 @@ export function JobCard({ job, onAction, onOpenMedia, onPreviewMedia, presentati
         <div className="job-actions">
           {active && <button className="text-button danger-text" onClick={() => onAction('cancel', job.id)}><X size={15} />取消</button>}
           {(job.status === 'failed' || job.status === 'canceled') && <button className="text-button" onClick={() => onAction('retry', job.id)}><RotateCcw size={14} />重试</button>}
-          {complete && job.media.length === 1 && !historical && <button type="button" className="text-button" onClick={() => onOpenMedia(job.media[0].id)}><FolderOpen size={15} />打开文件</button>}
+          {complete && job.media.length === 1 && !historical && (xLoginSupported
+            ? <button type="button" className="text-button" onClick={() => onOpenMedia(job.media[0])}><FolderOpen size={15} />打开文件</button>
+            : <><SaveLink media={job.media[0]} className="text-button">保存</SaveLink><ShareButton media={job.media[0]} onNotice={onNotice} /></>)}
         </div>
       </footer>}
     </article>

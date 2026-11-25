@@ -61,7 +61,7 @@ function formatRecent(value: string) {
   return Number.isNaN(date.getTime()) ? '时间未知' : RECENT_DATE_FORMATTER.format(date);
 }
 
-export function HistoryBrowser({ mode, revision, renderJob, onError, searchQuery, onSearchQueryChange, onDetailBackChange, selectionMode = false, selectedTweetIds = new Set<string>(), onStartSelection, onStopSelection, onSelectPage, onAssign, onScopeChange, active = true }: {
+export function HistoryBrowser({ mode, revision, renderJob, onError, searchQuery, onSearchQueryChange, onDetailBackChange, onAuthorDetailChange, selectionMode = false, selectedTweetIds = new Set<string>(), onStartSelection, onStopSelection, onSelectPage, onAssign, onScopeChange, active = true }: {
   mode: 'authors' | 'search';
   revision: number;
   renderJob: (job: DownloadJob) => ReactNode;
@@ -69,6 +69,7 @@ export function HistoryBrowser({ mode, revision, renderJob, onError, searchQuery
   searchQuery?: string;
   onSearchQueryChange?: (query: string) => void;
   onDetailBackChange?: (handler: (() => boolean) | null) => void;
+  onAuthorDetailChange?: (open: boolean) => void;
   selectionMode?: boolean;
   selectedTweetIds?: Set<string>;
   onStartSelection?: () => void;
@@ -100,9 +101,12 @@ export function HistoryBrowser({ mode, revision, renderJob, onError, searchQuery
   useEffect(() => { if (mode === 'search' && active) searchInput.current?.focus(); }, [mode, active]);
 
   useEffect(() => {
+    setPosts(null);
+  }, [mode, query, debouncedQuery, postPage]);
+
+  useEffect(() => {
     if (mode !== 'search') return;
     let live = true;
-    setPosts(null);
     if (!query.trim() || query !== debouncedQuery) return () => { live = false; };
     void listDownloadedPosts({ query: debouncedQuery, offset: postPage * PAGE_SIZE, limit: PAGE_SIZE })
       .then((result) => {
@@ -116,8 +120,11 @@ export function HistoryBrowser({ mode, revision, renderJob, onError, searchQuery
   }, [mode, query, debouncedQuery, postPage, revision, onError]);
 
   useEffect(() => {
+    if (mode === 'search' && (!query.trim() || query !== debouncedQuery)) setAuthors(null);
+  }, [mode, query, debouncedQuery]);
+
+  useEffect(() => {
     let live = true;
-    setAuthors(null);
     if (mode === 'search' && (!query.trim() || query !== debouncedQuery)) return () => { live = false; };
     void listAuthors({ query: mode === 'search' ? debouncedQuery : '', offset: authorPage * PAGE_SIZE, limit: PAGE_SIZE })
       .then((result) => {
@@ -131,9 +138,12 @@ export function HistoryBrowser({ mode, revision, renderJob, onError, searchQuery
   }, [mode, query, debouncedQuery, authorPage, revision, onError]);
 
   useEffect(() => {
+    setDetailPosts(null);
+  }, [detail, detailPage]);
+
+  useEffect(() => {
     if (!detail) return;
     let live = true;
-    setDetailPosts(null);
     void listDownloadedPosts({ authorKey: detail.authorKey, query: '', offset: detailPage * PAGE_SIZE, limit: PAGE_SIZE })
       .then((result) => {
         if (!live) return;
@@ -148,8 +158,12 @@ export function HistoryBrowser({ mode, revision, renderJob, onError, searchQuery
   useEffect(() => {
     const handler = detail ? () => { onScopeChange?.(); setDetail(null); return true; } : null;
     onDetailBackChange?.(handler);
-    return () => onDetailBackChange?.(null);
-  }, [detail, onDetailBackChange, onScopeChange]);
+    onAuthorDetailChange?.(Boolean(detail));
+    return () => {
+      onDetailBackChange?.(null);
+      onAuthorDetailChange?.(false);
+    };
+  }, [detail, onDetailBackChange, onAuthorDetailChange, onScopeChange]);
 
   function openAuthor(author: DownloadedAuthor) {
     onScopeChange?.();

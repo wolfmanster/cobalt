@@ -234,6 +234,14 @@ main { width: min(1120px, calc(100% - 56px)); margin: 0 auto; }
 .auth-session-copy { min-width: 0; display: grid; gap: 5px; }
 .auth-session-copy strong { color: #245a42; font-size: 13px; }
 .auth-session-copy small { max-width: 650px; color: #5f7567; font-size: 10px; line-height: 1.65; }
+.pwa-session-form { width: 100%; margin: 2px 0 0 58px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 11px; }
+.pwa-session-form label { display: grid; gap: 5px; color: #476352; font-size: 10px; font-weight: 800; }
+.pwa-session-form input { min-width: 0; height: 40px; padding: 0 11px; border: 1px solid #cbd8cf; border-radius: 11px; color: var(--ink); background: #fff; font: 11px ui-monospace, SFMono-Regular, Consolas, monospace; }
+.pwa-session-form input:focus { outline: 2px solid rgba(56, 169, 117, .24); border-color: #42a978; }
+.pwa-session-form input:disabled { color: #849187; background: #f2f5f3; }
+.pwa-session-configured { grid-column: 1 / -1; color: #245a42; font-size: 11px; line-height: 1.6; }
+.pwa-session-error { grid-column: 1 / -1; margin: 0; color: #9f3434; font-size: 10px; line-height: 1.55; }
+.pwa-session-form .auth-session-actions { grid-column: 1 / -1; margin-left: 0; }
 .auth-session-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; flex: none; }
 .auth-login-button, .danger-outline-button, .auth-close-button { border: 0; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 11px; font-weight: 800; }
 .auth-login-button { min-height: 40px; padding: 0 15px; border-radius: 13px; gap: 7px; color: white; background: var(--green); }
@@ -398,8 +406,12 @@ main { width: min(1120px, calc(100% - 56px)); margin: 0 auto; }
   .auth-session-copy { width: calc(100% - 54px); }
   .auth-session-copy strong { font-size: 11px; }
   .auth-session-copy small { font-size: 9px; }
+  .pwa-session-form { margin: 0 0 0 54px; grid-template-columns: 1fr; gap: 9px; }
+  .pwa-session-form label { font-size: 9px; }
+  .pwa-session-form input { height: 39px; font-size: 10px; }
   .auth-session-actions { width: 100%; margin-left: 54px; }
   .auth-login-button, .danger-outline-button { flex: 1; }
+  .pwa-session-form .auth-session-actions { margin-left: 0; }
   .quick-stats { margin: 18px 16px 0; gap: 8px; }
   .quick-stats > div { min-height: 78px; padding: 13px 12px; border-radius: 19px; }
   .quick-stats span { font-size: 8px; }
@@ -848,3 +860,17 @@ main { width: min(1120px, calc(100% - 56px)); margin: 0 auto; }
   .job-card.is-history-post .post-text,
   .job-card.is-history-post .media-grid { margin-left: 52px; }
 }
+
+.archive-login-page {
+  min-height: 100svh;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+}
+.archive-account { width: min(100%, 460px); max-height: 85svh; overflow: auto; }
+.archive-account form { display: grid; gap: 12px; }
+.archive-account label { display: grid; gap: 5px; }
+.archive-account input { width: 100%; padding: 9px 12px; color: inherit; background: transparent; border: 1px solid currentColor; border-radius: 8px; }
+.archive-account ul { padding-inline-start: 20px; overflow-wrap: anywhere; }
+.archive-device-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 8px 0; }
+.archive-copy-status { margin: 6px 0; font-size: .82rem; }

@@ -20,6 +20,8 @@ export interface MediaItem {
   totalBytes?: number;
   previewUrl: string;
   downloadUrl: string;
+  sha256?: string;
+  offlineReady?: boolean;
 }
 
 export interface DownloadJob {
@@ -36,4 +38,6 @@ export interface DownloadJob {
   createdAt: string;
   updatedAt: string;
   completedAt?: string;
+  archived?: boolean;
+  unavailableMedia?: number;
 }

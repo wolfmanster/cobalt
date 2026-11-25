@@ -1,8 +1,8 @@
 import { useRef, useState, type RefObject } from 'react';
 import { ArrowDownToLine, ClipboardPaste, FileText, Link2, LoaderCircle, ShieldCheck, Upload } from 'lucide-react';
 
-export function LinkComposer({ mobile, androidSession, input, linkCount, submitting, sessionConfigured, textareaRef, onInput, onImport, onSubmit, onPaste }: {
-  mobile: boolean; androidSession: boolean; input: string; linkCount: number; submitting: boolean; sessionConfigured: boolean;
+export function LinkComposer({ mobile, androidSession, pwaSessionAvailable, input, linkCount, submitting, sessionConfigured, textareaRef, onInput, onImport, onSubmit, onPaste }: {
+  mobile: boolean; androidSession: boolean; pwaSessionAvailable: boolean; input: string; linkCount: number; submitting: boolean; sessionConfigured: boolean;
   textareaRef: RefObject<HTMLTextAreaElement | null>; onInput: (text: string) => void;
   onImport: (file?: File) => Promise<void>; onSubmit: () => void; onPaste: () => void;
 }) {
@@ -37,6 +37,10 @@ export function LinkComposer({ mobile, androidSession, input, linkCount, submitt
         {submitting ? <LoaderCircle className="spin" size={18} /> : <ArrowDownToLine size={18} />}{submitting ? '正在添加…' : '开始下载'}
       </button>
     </div>
-    {mobile && <p className="native-composer-note"><ShieldCheck size={13} />{androidSession ? (sessionConfigured ? '已启用账号访问 · 媒体保存在本机' : '公开帖子无需登录 · 媒体保存在本机') : '仅下载公开帖子 · 媒体保存在服务器归档'}</p>}
+    {mobile && <p className="native-composer-note"><ShieldCheck size={13} />{androidSession
+      ? (sessionConfigured ? '已启用账号访问 · 媒体保存在本机' : '公开帖子无需登录 · 媒体保存在本机')
+      : pwaSessionAvailable
+        ? (sessionConfigured ? '已启用账号访问 · 媒体保存在服务器归档' : '公开帖子无需登录 · 可连接账号访问受保护帖')
+        : '仅下载公开帖子 · 服务器尚未启用 X 登录'}</p>}
   </section>;
 }

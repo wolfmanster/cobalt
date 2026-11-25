@@ -110,11 +110,13 @@ export function startPwaFixture() {
   const assignments = [];
   let cobalt = true;
   let posts = 0;
+  let tickerEnabled = false;
   const sse = new Set();
   const requests = [];
 
   const notify = () => { for (const response of sse) response.write('data: {"updated":true}\n\n'); };
   const timer = setInterval(() => {
+    if (!tickerEnabled) return;
     const active = jobs.find((job) => job.id === 'active-job' && job.status === 'downloading');
     if (!active) return;
     active.progress = (active.progress + 10) % 100;
@@ -153,6 +155,13 @@ export function startPwaFixture() {
   const server = createServer(async (request, response) => {
     const url = new URL(request.url, 'http://127.0.0.1');
     requests.push({ method: request.method, path: url.pathname + url.search });
+    if (request.method === 'GET' && url.pathname === '/api/account') {
+      const device = { id: 'fixture', name: 'Browser', expiresAt: Date.now() + 60_000 };
+      return send(response, 200, { device, devices: [device] });
+    }
+    if (request.method === 'GET' && url.pathname === '/api/x-session') {
+      return send(response, 200, { available: false, configured: false });
+    }
     if (request.method === 'GET' && url.pathname === '/api/health') {
       send(response, cobalt ? 200 : 503, { ok: true, cobalt, cobaltUrl: 'http://127.0.0.1:9000' });
       return;
@@ -290,15 +299,11 @@ export function startPwaFixture() {
       send(response, 200, publicJob(job));
       return;
     }
-    if (request.method === 'DELETE' && url.pathname === '/api/history') {
-      const terminal = new Set(['completed', 'failed', 'canceled']);
-      const removedJobs = jobs.filter((job) => terminal.has(job.status));
-      const removedIds = new Set(removedJobs.map((job) => job.tweetId));
-      for (let index = jobs.length - 1; index >= 0; index -= 1) if (terminal.has(jobs[index].status)) jobs.splice(index, 1);
-      for (let index = assignments.length - 1; index >= 0; index -= 1) if (removedIds.has(assignments[index].tweetId)) assignments.splice(index, 1);
+    if (request.method === 'DELETE' && url.pathname === '/api/history/failed') {
+      const count = jobs.length;
+      for (let index = jobs.length - 1; index >= 0; index -= 1) if (jobs[index].status === 'failed') jobs.splice(index, 1);
       notify();
-      send(response, 200, { removed: removedJobs.length });
-      return;
+      return send(response, 200, { removed: count - jobs.length });
     }
     const media = url.pathname.match(/^\/api\/jobs\/([^/]+)\/media\/([^/]+)$/);
     if (media && request.method === 'GET') {
@@ -327,6 +332,7 @@ export function startPwaFixture() {
         origin: `http://127.0.0.1:${address.port}`,
         requests,
         setCobalt(value) { cobalt = value; },
+        setTickerEnabled(value) { tickerEnabled = value; },
         postCount: () => posts,
         reset() {
           const fresh = seedJobs();

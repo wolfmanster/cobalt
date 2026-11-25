@@ -7,8 +7,10 @@ import { pipeline } from 'node:stream/promises';
 import { fetchPostMetadata } from './metadata.js';
 import { resolveMedia } from './cobalt.js';
 import { buildAuthorFolder, buildMediaFilename, buildPostFolder } from './media-paths.js';
-import type { DownloadJob, MediaItem } from './types.js';
+import type { DownloadJob, MediaItem, PostMetadata } from './types.js';
 import { JobStore } from './store.js';
+import { XPostResolver } from './x-post-resolver.js';
+import { XSessionStore } from './x-session-store.js';
 
 const EXTENSIONS: Record<string, string> = {
   'image/jpeg': 'jpg',
@@ -33,9 +35,11 @@ export class DownloadQueue extends EventEmitter {
   private readonly resolveConcurrency: number;
   private readonly downloadConcurrency: number;
   private readonly mediaDownloadConcurrency: number;
+  private readonly xPostResolver: XPostResolver;
 
-  constructor(private readonly store: JobStore) {
+  constructor(private readonly store: JobStore, sessions = new XSessionStore(store.dataDir)) {
     super();
+    this.xPostResolver = new XPostResolver(sessions);
     this.resolveConcurrency = concurrency('RESOLVE_CONCURRENCY', 4);
     this.downloadConcurrency = concurrency('DOWNLOAD_CONCURRENCY', 2);
     this.mediaDownloadConcurrency = concurrency('MEDIA_DOWNLOAD_CONCURRENCY', 2);
@@ -138,10 +142,23 @@ export class DownloadQueue extends EventEmitter {
       });
       this.emitChange();
 
-      const [metadata, media] = await Promise.all([
+      const [metadataResult, cobaltResult] = await Promise.allSettled([
         fetchPostMetadata(job.tweetId, controller.signal),
         resolveMedia(job.canonicalUrl, job.tweetId, controller.signal),
       ]);
+      controller.signal.throwIfAborted();
+      let metadata: PostMetadata;
+      let media: MediaItem[];
+      if (metadataResult.status === 'rejected') {
+        // A failed public X metadata lookup may mean the post needs an account. Ask
+        // GraphQL without a session first, then retry with the stored session only
+        // when X explicitly requires it. Cobalt failures for public posts stay errors.
+        ({ metadata, media } = await this.xPostResolver.resolveFallback(job.tweetId, controller.signal));
+      } else {
+        if (cobaltResult.status === 'rejected') throw cobaltResult.reason;
+        metadata = metadataResult.value;
+        media = cobaltResult.value;
+      }
       controller.signal.throwIfAborted();
       if (!media.length) throw new Error('帖子中没有可下载的媒体');
 
@@ -165,6 +182,7 @@ export class DownloadQueue extends EventEmitter {
         progress: 100,
         completedAt: new Date().toISOString(),
       });
+      await this.store.flush();
       this.emitChange();
     } catch (error) {
       this.finishWithError(jobId, controller, error);

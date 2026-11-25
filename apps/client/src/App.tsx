@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { createJobRefresh } from './jobRefresh';
 import { HistoryBrowser } from './HistoryBrowser';
 import { CategoryBrowser } from './CategoryBrowser';
 import { DownloadFolderDialog, ClearHistoryDialog } from './components/ArchiveDialogs';
@@ -21,35 +20,34 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import { cancelJob, clearHistory, clearXSession, consumeSharedContent, createJobs, createTweetCategory, deleteTweetCategory, getDownloadFolder, getHealth, getXSessionStatus, listJobs, listTweetCategories, openMedia, readClipboardText, renameTweetCategory, retryJob, selectDownloadFolder, setDownloadPath, startXLogin, subscribeCategoryChanges, subscribeJobs, subscribeServerEvents, subscribeSharedContent, xLoginSupported } from './api';
+import { cancelJob, clearHistory, consumeSharedContent, createJobs, createTweetCategory, deleteTweetCategory, getDownloadFolder, openMedia, readClipboardText, renameTweetCategory, retryJob, selectDownloadFolder, setDownloadPath, subscribeCategoryChanges, subscribeJobs, subscribeSharedContent, xLoginSupported } from './api';
 import { downloadFolderSupported, isNativeAndroid, mobileShell, usesLocalArchive } from './platform';
-import { subscribeServiceWorkerUpdate } from './pwa-update';
-import type { DownloadJob } from './types';
+import { HISTORY_PAGE_SIZE, useJobs } from './hooks/useJobs';
+import { useCategories } from './hooks/useCategories';
+import { useRuntimeStatus } from './hooks/useRuntimeStatus';
+import { useXSession } from './hooks/useXSession';
+import type { DownloadJob, MediaItem } from './types';
 import type { TweetCategory } from './nativeArchive';
 
-const HISTORY_PAGE_SIZE = 25;
-
-export default function App() {
+export default function App({ onArchiveAccount, syncMessage }: { onArchiveAccount: () => void; syncMessage: string }) {
   const mediaViewer = useMediaViewer();
-  const [jobs, setJobs] = useState<DownloadJob[]>([]);
-  const [historyTotal, setHistoryTotal] = useState(0);
-  const [completedToday, setCompletedToday] = useState(0);
-  const [historyPage, setHistoryPage] = useState(0);
+  const { serviceHealthy, offline, applyUpdate } = useRuntimeStatus();
+  const { categories, allDownloadedCount, uncategorizedCount, revision: archiveRevision, invalidateArchive, refreshCategories, noteCategoryCreated } = useCategories();
+  const { jobs, historyTotal, completedToday, historyPage, refreshJobs, resetHistoryPage, showHistoryPage } = useJobs(invalidateArchive);
   const [input, setInput] = useState('');
   const [tab, setTab] = useState<'queue' | 'history' | 'search'>('queue');
   const [historyView, setHistoryView] = useState<'all' | 'authors' | 'categories'>('all');
-  const [categories, setCategories] = useState<TweetCategory[]>([]);
-  const [allDownloadedCount, setAllDownloadedCount] = useState(0);
-  const [uncategorizedCount, setUncategorizedCount] = useState(0);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedTweetIds, setSelectedTweetIds] = useState<Set<string>>(() => new Set());
   const [categoryTargets, setCategoryTargets] = useState<string[] | null>(null);
   const [categoryNameDialogOpen, setCategoryNameDialogOpen] = useState(false);
   const [categoryToRename, setCategoryToRename] = useState<TweetCategory | null>(null);
   const [categoryToDelete, setCategoryToDelete] = useState<TweetCategory | null>(null);
-  const [archiveRevision, setArchiveRevision] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [notice, setNotice] = useState('');
+  const { configured: sessionConfigured, available: sessionAvailable, stored: sessionStored, error: sessionError,
+    panelOpen: showSessionPanel, setPanelOpen: setShowSessionPanel, busy: sessionBusy,
+    connect: connectX, save: savePwaXSession, disconnect: disconnectX } = useXSession(setNotice);
   const [choosingFolder, setChoosingFolder] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [clearConfirmationOpen, setClearConfirmationOpen] = useState(false);
@@ -57,42 +55,15 @@ export default function App() {
   const [folderLabel, setFolderLabel] = useState('Download/X Media Archive');
   const [folderDialogOpen, setFolderDialogOpen] = useState(false);
   const [downloadSubfolder, setDownloadSubfolder] = useState('X Media Archive');
-  const [serviceHealthy, setServiceHealthy] = useState<boolean | null>(null);
-  const [sessionConfigured, setSessionConfigured] = useState(false);
-  const [showSessionPanel, setShowSessionPanel] = useState(false);
-  const [sessionBusy, setSessionBusy] = useState(false);
   const archiveBackHandler = useRef<(() => boolean) | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const handledSharedLinks = useRef(new Set<string>());
-  const historyPageRef = useRef(0);
-  const previousHistoryTotal = useRef<number | null>(null);
   const previousTab = useRef(tab);
   const [searchQuery, setSearchQuery] = useState('');
-  const [offline, setOffline] = useState(!isNativeAndroid && typeof navigator !== 'undefined' && navigator.onLine === false);
-  const [applyUpdate, setApplyUpdate] = useState<(() => void) | null>(null);
   const urls = useMemo(() => extractUrls(input), [input]);
 
   const registerArchiveBackHandler = useCallback((handler: (() => boolean) | null) => {
     archiveBackHandler.current = handler;
-  }, []);
-
-  const loadJobs = useMemo(() => createJobRefresh(listJobs, HISTORY_PAGE_SIZE, (result, page) => {
-    if (previousHistoryTotal.current !== null && previousHistoryTotal.current !== result.historyTotal) {
-      setArchiveRevision((current) => current + 1);
-    }
-    previousHistoryTotal.current = result.historyTotal;
-    setJobs(result.jobs);
-    setHistoryTotal(result.historyTotal);
-    setCompletedToday(result.completedToday);
-    historyPageRef.current = page;
-    setHistoryPage(page);
-  }), []);
-  const refreshJobs = useCallback(() => loadJobs(historyPageRef.current), [loadJobs]);
-  const refreshCategories = useCallback(async () => {
-    const result = await listTweetCategories();
-    setCategories(result.categories);
-    setAllDownloadedCount(result.allTotal);
-    setUncategorizedCount(result.uncategorizedTotal);
   }, []);
 
   const submitUrls = useCallback(async (requestedUrls: string[]) => {
@@ -103,7 +74,7 @@ export default function App() {
     }
     setSubmitting(true);
     try {
-      if (downloadFolderSupported && !(await getDownloadFolder()).selected) {
+      if (usesLocalArchive && !(await getDownloadFolder()).selected) {
         setFolderDialogOpen(true);
         setNotice('请先重新设置下载位置');
         return;
@@ -143,38 +114,37 @@ export default function App() {
         }
       }).catch(() => undefined);
     }
-    if (xLoginSupported) {
-      void getXSessionStatus().then((result) => setSessionConfigured(result.configured)).catch(() => undefined);
-    }
+    const shared = subscribeSharedContent((text) => { void receiveSharedContent(text); });
+    void consumeSharedContent().then((result) => { if (result.text) void receiveSharedContent(result.text); });
     if (usesLocalArchive) {
       const events = subscribeJobs(() => { void refreshJobs().catch((error) => setNotice(error.message)); });
-      const shared = subscribeSharedContent((text) => {
-        void receiveSharedContent(text);
-      });
-      void consumeSharedContent().then((result) => {
-        if (result.text) void receiveSharedContent(result.text);
-      });
       return () => { void events.close(); void shared.close(); };
     }
-    void refreshCategories().catch((error) => setNotice(error instanceof Error ? error.message : '无法读取分类'));
-    const events = subscribeServerEvents(() => {
-      void refreshJobs().catch((error) => setNotice(error.message));
-      void refreshCategories().catch((error) => setNotice(error instanceof Error ? error.message : '无法刷新分类'));
-      setArchiveRevision((current) => current + 1);
-    });
-    return () => { void events.close(); };
-  }, [receiveSharedContent, refreshCategories, refreshJobs]);
+    const refresh = () => {
+      void refreshJobs().catch(() => undefined);
+      void refreshCategories().catch(() => undefined);
+      invalidateArchive();
+    };
+    refresh();
+    window.addEventListener('archive-server-changed', refresh);
+    window.addEventListener('archive-catalog-changed', refresh);
+    return () => {
+      void shared.close();
+      window.removeEventListener('archive-server-changed', refresh);
+      window.removeEventListener('archive-catalog-changed', refresh);
+    };
+  }, [invalidateArchive, receiveSharedContent, refreshCategories, refreshJobs]);
 
   useEffect(() => {
     if (!usesLocalArchive) return;
     void refreshCategories().catch((error) => setNotice(error instanceof Error ? error.message : '无法读取分类'));
     const events = subscribeCategoryChanges(() => {
-      setArchiveRevision((current) => current + 1);
+      invalidateArchive();
       void refreshCategories().catch((error) => setNotice(error instanceof Error ? error.message : '无法刷新分类'));
       void refreshJobs().catch((error) => setNotice(error.message));
     });
     return () => { void events.close(); };
-  }, [refreshCategories, refreshJobs]);
+  }, [invalidateArchive, refreshCategories, refreshJobs]);
 
   useEffect(() => {
     if (!notice) return;
@@ -326,43 +296,11 @@ export default function App() {
   }, [browserLayers]);
 
   useEffect(() => {
-    let disposed = false;
-    const refreshHealth = async () => {
-      try {
-        const health = await getHealth();
-        if (!disposed) setServiceHealthy(usesLocalArchive ? Boolean(health.ok && health.local) : Boolean(health.ok && health.cobalt));
-      } catch {
-        if (!disposed) setServiceHealthy(false);
-      }
-    };
-    void refreshHealth();
-    const interval = window.setInterval(() => void refreshHealth(), 30_000);
-    return () => {
-      disposed = true;
-      window.clearInterval(interval);
-    };
-  }, []);
-
-  useEffect(() => {
     if (isNativeAndroid || !('scrollRestoration' in history)) return;
     const previous = history.scrollRestoration;
     history.scrollRestoration = 'manual';
     return () => { history.scrollRestoration = previous; };
   }, []);
-
-  useEffect(() => {
-    if (isNativeAndroid) return;
-    const show = () => setOffline(true);
-    const hide = () => setOffline(false);
-    window.addEventListener('offline', show);
-    window.addEventListener('online', hide);
-    return () => {
-      window.removeEventListener('offline', show);
-      window.removeEventListener('online', hide);
-    };
-  }, []);
-
-  useEffect(() => subscribeServiceWorkerUpdate((apply) => setApplyUpdate(() => apply)), []);
 
   useEffect(() => {
     if (isNativeAndroid || !window.visualViewport) return;
@@ -413,14 +351,13 @@ export default function App() {
     setClearing(true);
     try {
       const { removed } = await clearHistory();
-      historyPageRef.current = 0;
-      setHistoryPage(0);
+      resetHistoryPage();
       await refreshJobs();
-      setArchiveRevision((current) => current + 1);
+      invalidateArchive();
       await refreshCategories();
-      setNotice(`已清除 ${removed} 条历史记录`);
+      setNotice(`已清除 ${removed} 条失败记录`);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : '无法清除历史记录');
+      setNotice(error instanceof Error ? error.message : '无法清除失败记录');
     } finally {
       setClearing(false);
     }
@@ -430,9 +367,9 @@ export default function App() {
     setClearConfirmationOpen(true);
   }
 
-  async function openJobMedia(id: string) {
+  async function openJobMedia(media: MediaItem) {
     try {
-      await openMedia({ id });
+      await openMedia({ id: media.id, downloadUrl: media.downloadUrl, sha256: media.sha256 });
     } catch (error) {
       setNotice(error instanceof Error ? error.message : '无法打开媒体文件');
     }
@@ -470,40 +407,6 @@ export default function App() {
     }).catch(() => undefined);
   }
 
-  async function connectX() {
-    if (!xLoginSupported) {
-      setNotice('请在 Android 应用中使用内置 X 登录；auth_token 与 ct0 会通过 Keystore 加密保存');
-      return;
-    }
-    setSessionBusy(true);
-    try {
-      const result = await startXLogin();
-      setSessionConfigured(result.configured);
-      if (!result.canceled && result.configured) {
-        setShowSessionPanel(false);
-        setNotice('X 登录已加密保存；现在可下载当前账号有权查看的受保护帖子');
-      }
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : '无法打开 X 登录');
-    } finally {
-      setSessionBusy(false);
-    }
-  }
-
-  async function disconnectX() {
-    setSessionBusy(true);
-    try {
-      const result = await clearXSession();
-      setSessionConfigured(result.configured);
-      setShowSessionPanel(false);
-      setNotice('已移除本机保存的 X 登录；之后仅下载公开帖子');
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : '无法移除 X 登录');
-    } finally {
-      setSessionBusy(false);
-    }
-  }
-
   function clearSelection() {
     setSelectionMode(false);
     setSelectedTweetIds(new Set());
@@ -532,7 +435,7 @@ export default function App() {
     else await createTweetCategory(name);
     setCategoryNameDialogOpen(false);
     setCategoryToRename(null);
-    setArchiveRevision((current) => current + 1);
+    invalidateArchive();
     void refreshCategories().catch((error) => setNotice(error instanceof Error ? error.message : '无法刷新分类'));
   }
 
@@ -541,24 +444,19 @@ export default function App() {
     await deleteTweetCategory(categoryToDelete.id);
     setCategoryToDelete(null);
     clearSelection();
-    setArchiveRevision((current) => current + 1);
+    invalidateArchive();
     await refreshCategories();
   }
 
   function finishCategoryAssignment() {
     setCategoryTargets(null);
     clearSelection();
-    setArchiveRevision((current) => current + 1);
+    invalidateArchive();
     void Promise.all([refreshJobs(), refreshCategories()]).catch((error) => setNotice(error instanceof Error ? error.message : '分类已保存，但列表刷新失败'));
   }
 
-  function onCategoryCreated(category: TweetCategory) {
-    setCategories((current) => current.some((item) => item.id === category.id) ? current : [...current, category]);
-    setArchiveRevision((current) => current + 1);
-  }
-
   function renderHistoryJob(job: DownloadJob) {
-    return <JobCard key={job.id} job={job} onAction={action} onOpenMedia={(id) => void openJobMedia(id)} onPreviewMedia={mediaViewer.open} onNotice={setNotice} presentation="history"
+    return <JobCard key={job.id} job={job} onAction={action} onOpenMedia={(media) => void openJobMedia(media)} onPreviewMedia={mediaViewer.open} onNotice={setNotice} presentation="history"
       onClassify={(tweetId) => openCategoryPanel([tweetId])} selectionMode={selectionMode}
       selected={selectedTweetIds.has(job.tweetId)} onToggleSelection={toggleSelectedTweet} />;
   }
@@ -584,33 +482,30 @@ export default function App() {
     }
   }
 
-  function showHistoryPage(page: number) {
-    const lastPage = Math.max(0, Math.ceil(historyTotal / HISTORY_PAGE_SIZE) - 1);
-    const nextPage = Math.min(Math.max(page, 0), lastPage);
-    historyPageRef.current = nextPage;
-    void refreshJobs().catch((error) => setNotice(error.message));
+  function goToHistoryPage(page: number) {
+    void showHistoryPage(page).catch((error) => setNotice(error instanceof Error ? error.message : '无法刷新历史记录'));
   }
 
-  const ingestPanel = <LinkComposer mobile={mobileShell} androidSession={xLoginSupported} input={input} linkCount={urls.length}
+  const ingestPanel = <LinkComposer mobile={mobileShell} androidSession={xLoginSupported} pwaSessionAvailable={sessionAvailable} input={input} linkCount={urls.length}
     submitting={submitting} sessionConfigured={sessionConfigured} textareaRef={textareaRef}
     onInput={setInput} onImport={importFile} onSubmit={() => void submit()} onPaste={openComposer} />;
 
-  const sessionPanel = showSessionPanel && <SessionPanel native={xLoginSupported} configured={sessionConfigured}
-    busy={sessionBusy} onConnect={() => void connectX()} onDisconnect={() => void disconnectX()}
+  const sessionPanel = showSessionPanel && <SessionPanel native={xLoginSupported} browserSession={!usesLocalArchive} available={sessionAvailable} configured={sessionConfigured} stored={sessionStored} error={sessionError}
+    busy={sessionBusy} onConnect={() => void connectX()} onSave={savePwaXSession} onDisconnect={() => void disconnectX()}
     onClose={() => setShowSessionPanel(false)} />;
 
   return (
     <div className={`app-shell is-mobile-shell${isNativeAndroid ? ' is-native' : ''}`}>
       <NativeHeader tab={tab} folderReady={folderReady} folderLabel={folderLabel}
         choosingFolder={choosingFolder} sessionConfigured={sessionConfigured} sessionBusy={sessionBusy}
-        serviceHealthy={serviceHealthy} showAndroidChrome={isNativeAndroid} onFolder={() => setFolderDialogOpen(true)}
-        onAccount={() => setShowSessionPanel((visible) => !visible)} />
-      {!isNativeAndroid && offline && <div className="offline-hint" role="status">当前离线，归档仍在服务器</div>}
+        serviceHealthy={serviceHealthy} showAndroidChrome={isNativeAndroid} showBrowserSession={!usesLocalArchive} onFolder={() => setFolderDialogOpen(true)}
+        onAccount={() => setShowSessionPanel((visible) => !visible)} onArchiveAccount={onArchiveAccount} />
+      {!usesLocalArchive && (syncMessage || offline) && <div className="offline-hint" role="status">{syncMessage || '正在离线使用'}</div>}
       {applyUpdate && <div className="update-hint" role="status">有新版本，刷新后更新<button type="button" onClick={() => applyUpdate()}>刷新</button></div>}
 
       <main id="top" className="native-main">
           <>
-            {isNativeAndroid && sessionPanel}
+            {sessionPanel}
             <div className="native-pages">
               <section className={`native-page ${tab === 'queue' ? 'is-current' : ''}`} aria-label="首页">
                 {ingestPanel}
@@ -618,7 +513,7 @@ export default function App() {
                 <section className="workspace">
                   <div className="workspace-head"><div className="workspace-title"><h2>进行中的任务</h2><p>下载状态会自动更新</p></div></div>
                   {activeJobs.length ? (
-                    <div className="job-list">{activeJobs.map((job) => <JobCard key={job.id} job={job} onAction={action} onOpenMedia={(id) => void openJobMedia(id)} onPreviewMedia={mediaViewer.open} onNotice={setNotice} />)}</div>
+                    <div className="job-list">{activeJobs.map((job) => <JobCard key={job.id} job={job} onAction={action} onOpenMedia={(media) => void openJobMedia(media)} onPreviewMedia={mediaViewer.open} onNotice={setNotice} />)}</div>
                   ) : (
                     <div className="empty-state">
                       <span><Pause size={25} /></span>
@@ -651,8 +546,8 @@ export default function App() {
               <section className={`native-page ${tab === 'history' ? 'is-current' : ''}`} aria-label="历史">
                 <section className="workspace native-history-workspace">
                   <div className="workspace-head">
-                    <div className="workspace-title"><h2>本地归档</h2><p>按帖子或作者浏览</p></div>
-                    {historyTotal > 0 && <button className="clear-button" type="button" onClick={requestClearHistory} disabled={clearing}>{clearing ? <LoaderCircle className="spin" size={15} /> : <Trash2 size={15} />}{clearing ? '正在清除' : '清除'}</button>}
+                    <div className="workspace-title"><h2>{usesLocalArchive ? '本地归档' : '共享归档'}</h2><p>按帖子或作者浏览</p></div>
+                    {historyTotal > 0 && <button className="clear-button" type="button" onClick={requestClearHistory} disabled={clearing}>{clearing ? <LoaderCircle className="spin" size={15} /> : <Trash2 size={15} />}{clearing ? '正在清除' : '清除失败记录'}</button>}
                   </div>
                   <div className="archive-view-tabs" role="tablist" aria-label="历史浏览方式">
                     <button type="button" role="tab" aria-selected={historyView === 'all'} className={historyView === 'all' ? 'selected' : ''} onClick={() => { clearSelection(); setHistoryView('all'); }}>全部推文</button>
@@ -686,9 +581,9 @@ export default function App() {
                         onSelectPage={selectCurrentPage} onAssign={() => openCategoryPanel([...selectedTweetIds])} />
                       <div className="job-list history-post-list">{historyJobs.map(renderHistoryJob)}</div>
                       {historyTotal > HISTORY_PAGE_SIZE && <nav className="history-pagination" aria-label="下载历史分页">
-                        <button onClick={() => showHistoryPage(historyPage - 1)} disabled={historyPage === 0}>上一页</button>
+                        <button onClick={() => goToHistoryPage(historyPage - 1)} disabled={historyPage === 0}>上一页</button>
                         <span>第 {historyPage + 1} / {Math.ceil(historyTotal / HISTORY_PAGE_SIZE)} 页</span>
-                        <button onClick={() => showHistoryPage(historyPage + 1)} disabled={(historyPage + 1) * HISTORY_PAGE_SIZE >= historyTotal}>下一页</button>
+                        <button onClick={() => goToHistoryPage(historyPage + 1)} disabled={(historyPage + 1) * HISTORY_PAGE_SIZE >= historyTotal}>下一页</button>
                       </nav>}
                     </>
                   ) : <div className="empty-state"><span><History size={25} /></span><h3>这里还很安静</h3><p>完成、失败或取消的任务都会保留在这里。</p></div>}
@@ -700,15 +595,15 @@ export default function App() {
 
       <HistoryMediaViewer viewer={mediaViewer} />
 
-      <footer className="page-footer"><span>{isNativeAndroid ? '媒体由本地服务解析与保存' : '媒体由服务器归档'}</span><span>{isNativeAndroid && sessionConfigured ? 'X 会话经 Android Keystore 加密' : '公开帖子无需登录'}</span></footer>
+      <footer className="page-footer"><span>{usesLocalArchive ? '媒体由本地服务解析与保存' : '媒体由服务器归档'}</span><span>{usesLocalArchive && sessionConfigured ? 'X 会话经 Android Keystore 加密' : !usesLocalArchive && sessionConfigured ? 'X 会话由服务器加密保存' : '公开帖子无需登录'}</span></footer>
       <NativeNavigation tab={tab} onNavigate={jumpToTab} onCompose={openComposer} />
       {isNativeAndroid && folderDialogOpen && <DownloadFolderDialog subfolder={downloadSubfolder} currentLocation={folderLabel} busy={choosingFolder}
         onSubfolder={setDownloadSubfolder} onSave={() => void saveDownloadSubfolder()}
         onChoose={() => void chooseDownloadFolder()} onClose={() => setFolderDialogOpen(false)} />}
-      {clearConfirmationOpen && <ClearHistoryDialog busy={clearing} removesServerArchive={!isNativeAndroid} onConfirm={() => void clear()}
+      {clearConfirmationOpen && <ClearHistoryDialog busy={clearing} onConfirm={() => void clear()}
         onClose={() => setClearConfirmationOpen(false)} />}
       {categoryTargets !== null && <TweetCategoryDialog tweetIds={categoryTargets} categories={categories}
-        onCreateCategory={onCategoryCreated} onClose={() => setCategoryTargets(null)} onSaved={finishCategoryAssignment} />}
+        onCreateCategory={noteCategoryCreated} onClose={() => setCategoryTargets(null)} onSaved={finishCategoryAssignment} />}
       {categoryNameDialogOpen && <CategoryNameDialog category={categoryToRename ?? undefined}
         onClose={() => { setCategoryNameDialogOpen(false); setCategoryToRename(null); }} onSave={saveCategoryName} />}
       {categoryToDelete && <DeleteCategoryDialog category={categoryToDelete} onClose={() => setCategoryToDelete(null)} onConfirm={confirmDeleteCategory} />}

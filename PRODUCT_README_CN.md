@@ -70,7 +70,7 @@ pnpm test
 .\start-all.ps1
 ```
 
-访问 `http://127.0.0.1:4100`。Cobalt 只监听 `127.0.0.1:9000`，不应直接暴露到公网。
+归档账号、iPhone 主屏幕安装和私有 HTTPS 配置见 [双端部署说明](./PWA_DEPLOY_CN.md)。本地回环调试启用 `ARCHIVE_INSECURE_LOOPBACK=1` 后可访问 `http://127.0.0.1:4100`。
 
 开发模式需要三个终端：
 
@@ -82,8 +82,6 @@ pnpm --filter @x-media/client dev
 
 前端开发地址为 `http://127.0.0.1:5173`，Vite 会把 `/api` 代理到业务后端。
 
-iPhone 通过受控私有 HTTPS 使用同一套页面。安装、Service Worker、Range 和反代说明见 [PWA_DEPLOY_CN.md](PWA_DEPLOY_CN.md)。不要把 4100 或 9000 暴露到公网。
-
 ## 业务 API
 
 - `GET /api/health`：业务服务和 Cobalt 状态。
@@ -93,11 +91,12 @@ iPhone 通过受控私有 HTTPS 使用同一套页面。安装、Service Worker�
 - `POST /api/jobs/:id/retry`：重试。
 - `GET /api/events`：SSE 队列进度。
 - `GET /api/jobs/:jobId/media/:mediaId`：预览；加 `?download=1` 下载。
-- `DELETE /api/history`：清除终态记录及对应的项目内媒体目录。
+- `GET /api/sync`：获取含版本、类别和文件校验信息的分页归档清单。
+- `DELETE /api/history/failed`：清除失败任务记录。
 
 ## 生产注意事项
 
-- 业务后端默认只监听 `127.0.0.1:4100`；公网使用时应放在 HTTPS 反向代理后。
+- 业务后端默认只监听 `127.0.0.1:4100`。手机通过受控的 HTTPS 反向代理接入。
 - Cobalt 与业务后端应在同一受信网络内，公网不要开放 9000 端口。
 - 若 Cobalt 配置 API key，在 `apps/server/.env` 同时设置 `COBALT_API_KEY`。
-- 历史使用项目内 `data/jobs.json` 持久化；清除历史会同时删除对应媒体，不可恢复。
+- 归档历史、分类和媒体都保存在 `DATA_DIR`。双端登录后共享同一份服务器归档。

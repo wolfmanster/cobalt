@@ -7,6 +7,8 @@ import { createApp, type RunningApp } from './http-api.js';
 import { contentDispositionAttachment, parseByteRange } from './media-stream.js';
 import type { DownloadJob, MediaItem } from './types.js';
 
+const archiveUsername = 'test';
+const archivePassword = 'archive-fixture-password';
 const servers: Array<{ close: () => Promise<void> }> = [];
 
 afterEach(async () => {
@@ -43,7 +45,18 @@ async function listen(running: RunningApp) {
   await new Promise<void>((resolve) => server.once('listening', () => resolve()));
   const address = server.address() as AddressInfo;
   servers.push({ close: () => new Promise((resolve) => server.close(() => resolve())) });
-  return `http://127.0.0.1:${address.port}`;
+  const base = `http://127.0.0.1:${address.port}`;
+  const login = await fetch(`${base}/api/account/login`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: archiveUsername, password: archivePassword, deviceName: 'Test' }),
+  });
+  expect(login.status).toBe(200);
+  const cookie = login.headers.get('set-cookie')!.split(';')[0]!;
+  return (route: string, init?: RequestInit) => {
+    const headers = new Headers(init?.headers);
+    headers.set('Cookie', cookie);
+    return fetch(base + route, { ...init, headers });
+  };
 }
 
 describe('media stream', () => {
@@ -88,12 +101,12 @@ describe('media stream', () => {
       job({ id: 'partial', status: 'failed', progress: 10, completedAt: undefined, media: [media({ id: 'pic', filename: '1-pic.jpg', localPath: 'media/job/1-pic.jpg' })] }),
     ];
     await fs.writeFile(path.join(dataDir, 'jobs.json'), JSON.stringify(jobs));
-    const running = await createApp({ dataDir, clientDist: path.join(dataDir, 'missing-dist') });
-    const base = await listen(running);
+    const running = await createApp({ dataDir, archiveUsername, archivePassword, insecureLoopback: true, clientDist: path.join(dataDir, 'missing-dist') });
+    const request = await listen(running);
     const source = await fs.readFile(new URL('../src/media-stream.ts', import.meta.url), 'utf8');
     expect(source).not.toMatch(/\breadFile\b/);
 
-    const full = await fetch(`${base}/api/jobs/job/media/pic`);
+    const full = await request(`/api/jobs/job/media/pic`);
     expect(full.status).toBe(200);
     expect(full.headers.get('accept-ranges')).toBe('bytes');
     expect(full.headers.get('content-type')).toBe('image/jpeg');
@@ -101,35 +114,35 @@ describe('media stream', () => {
     expect(full.headers.get('content-disposition')).toBeNull();
     expect(Buffer.from(await full.arrayBuffer())).toEqual(bytes);
 
-    const slice = await fetch(`${base}/api/jobs/job/media/vdo`, { headers: { Range: 'bytes=2-5' } });
+    const slice = await request(`/api/jobs/job/media/vdo`, { headers: { Range: 'bytes=2-5' } });
     expect(slice.status).toBe(206);
     expect(slice.headers.get('content-type')).toBe('video/mp4');
     expect(slice.headers.get('content-range')).toBe(`bytes 2-5/${bytes.length}`);
     expect(slice.headers.get('content-length')).toBe('4');
     expect(Buffer.from(await slice.arrayBuffer())).toEqual(bytes.subarray(2, 6));
 
-    const openEnded = await fetch(`${base}/api/jobs/job/media/vdo`, { headers: { Range: 'bytes=14-' } });
+    const openEnded = await request(`/api/jobs/job/media/vdo`, { headers: { Range: 'bytes=14-' } });
     expect(openEnded.status).toBe(206);
     expect(openEnded.headers.get('content-length')).toBe('2');
     expect(Buffer.from(await openEnded.arrayBuffer())).toEqual(bytes.subarray(14));
 
-    const missing = await fetch(`${base}/api/jobs/job/media/vdo`, { headers: { Range: 'bytes=40-50' } });
+    const missing = await request(`/api/jobs/job/media/vdo`, { headers: { Range: 'bytes=40-50' } });
     expect(missing.status).toBe(416);
     expect(missing.headers.get('content-range')).toBe(`bytes */${bytes.length}`);
 
-    const download = await fetch(`${base}/api/jobs/job/media/pic?download=1`);
+    const download = await request(`/api/jobs/job/media/pic?download=1`);
     const disposition = download.headers.get('content-disposition') ?? '';
     expect(disposition.startsWith('attachment;')).toBe(true);
     expect(disposition).not.toMatch(/[\r\n]/);
     expect(disposition).toContain('filename="1-pic.jpgX-Evil: 1"');
     expect(disposition).toContain('filename*=UTF-8\'\'');
 
-    const gif = await fetch(`${base}/api/jobs/job/media/gif`);
+    const gif = await request(`/api/jobs/job/media/gif`);
     expect(gif.status).toBe(200);
     expect(gif.headers.get('content-type')).toBe('image/gif');
 
-    expect((await fetch(`${base}/api/jobs/partial/media/pic`)).status).toBe(404);
-    expect((await fetch(`${base}/api/jobs/job/media/escape`)).status).toBe(404);
+    expect((await request(`/api/jobs/partial/media/pic`)).status).toBe(404);
+    expect((await request(`/api/jobs/job/media/escape`)).status).toBe(404);
     expect(await fs.readFile(path.join(dataDir, 'secret.txt'), 'utf8')).toBe('secret');
   });
 });

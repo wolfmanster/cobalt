@@ -21,19 +21,30 @@ import com.xmedia.archive.repository.ArchiveRepository
 import com.xmedia.archive.resolver.XAuthSessionStore
 import com.xmedia.archive.service.DownloadForegroundService
 import com.xmedia.archive.storage.DownloadDestination
+import com.xmedia.archive.sync.ArchiveHttpException
+import com.xmedia.archive.sync.SharedArchive
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okhttp3.Call
 import java.io.File
 
 @CapacitorPlugin(name = "LocalArchive")
 class LocalArchivePlugin : Plugin() {
     private lateinit var repository: ArchiveRepository
     private lateinit var sessionStore: XAuthSessionStore
+    private lateinit var sharedArchive: SharedArchive
     private val scope = CoroutineScope(Dispatchers.Main.immediate + Job())
+    private var watchJob: Job? = null
+    private var watchedServer: String? = null
+    @Volatile private var eventCall: Call? = null
     private var pendingSharedText: String? = null
     private var completedJobSnapshot: Map<String, String>? = null
 
@@ -42,6 +53,7 @@ class LocalArchivePlugin : Plugin() {
         pendingSharedText = sharedTextFromIntent(activity?.intent)
         repository = ArchiveRepository(context)
         sessionStore = XAuthSessionStore(context)
+        sharedArchive = SharedArchive(context)
         scope.launch {
             repository.observeJobs().collectLatest {
                 notifyListeners("jobsChanged", JSObject())
@@ -56,6 +68,122 @@ class LocalArchivePlugin : Plugin() {
         }
         scope.launch {
             if (repository.hasPendingJobs()) DownloadForegroundService.start(context)
+        }
+    }
+
+    override fun handleOnDestroy() {
+        eventCall?.cancel()
+        scope.cancel()
+        super.handleOnDestroy()
+    }
+
+    @PluginMethod
+    fun remoteRequest(call: PluginCall) = sharedCall(call) { server ->
+        val path = requireNotNull(call.getString("path"))
+        val method = call.getString("method", "GET") ?: "GET"
+        val (status, data) = sharedArchive.network.request(server, method, path, call.getString("body"))
+        JSObject().put("status", status).put("data", data)
+    }
+
+    @PluginMethod
+    fun importArchive(call: PluginCall) = sharedCall(call) { server ->
+        JSObject(sharedArchive.importDownloads(server, call.getBoolean("retry") == true).toString())
+    }
+
+    @PluginMethod
+    fun findCopies(call: PluginCall) = sharedCall(call) { server ->
+        val array = requireNotNull(call.getArray("hashes"))
+        val hashes = (0 until array.length()).map { array.getString(it) }.toSet()
+        JSObject(sharedArchive.copies(server, hashes).toString())
+    }
+
+    @PluginMethod
+    fun loadCatalog(call: PluginCall) = sharedCall(call) { server ->
+        JSObject().put("catalog", sharedArchive.loadCatalog(server))
+    }
+
+    @PluginMethod
+    fun saveCatalog(call: PluginCall) = sharedCall(call) { server ->
+        sharedArchive.saveCatalog(server, requireNotNull(call.getObject("catalog")))
+        JSObject()
+    }
+
+    @PluginMethod
+    fun saveCopy(call: PluginCall) = sharedCall(call) { server ->
+        val uri = sharedArchive.download(server, requireNotNull(call.getString("tweetId")), call.getObject("metadata"),
+            requireNotNull(call.getObject("media")), requireNotNull(call.getInt("chunkSize")))
+        JSObject().put("uri", uri.toString())
+    }
+
+    @PluginMethod
+    fun openSyncedFile(call: PluginCall) = sharedCall(call) { server ->
+        val media = sharedArchive.copy(server, requireNotNull(call.getString("sha256"))) ?: error("本机副本尚未保存")
+        withContext(Dispatchers.Main) {
+            context.startActivity(Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(media.uri, media.contentType)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            })
+        }
+        JSObject()
+    }
+
+    @PluginMethod
+    fun watchArchive(call: PluginCall) {
+        val server = runCatching { sharedArchive.network.origin(call.getString("origin").orEmpty()) }
+            .getOrElse { call.reject("归档服务地址无效"); return }
+        val enabled = call.getBoolean("enabled") == true
+        scope.launch {
+            if (enabled && watchedServer == server && watchJob?.isActive == true) {
+                call.resolve()
+                return@launch
+            }
+            watchJob?.cancel()
+            eventCall?.cancel()
+            eventCall = null
+            watchedServer = server.takeIf { enabled }
+            watchJob = if (enabled) scope.launch(Dispatchers.IO) {
+                while (isActive) {
+                    try {
+                        val request = sharedArchive.network.eventCall(server)
+                        eventCall = request
+                        if (!isActive) request.cancel()
+                        request.execute().use { response ->
+                            if (response.code == 401) throw ArchiveHttpException(401, "请登录归档账号")
+                            if (!response.isSuccessful) return@use
+                            val stream = response.body?.source() ?: return@use
+                            while (isActive) {
+                                val line = stream.readUtf8Line() ?: break
+                                if (line.startsWith("data:")) withContext(Dispatchers.Main) {
+                                    notifyListeners("remoteChanged", JSObject())
+                                }
+                            }
+                        }
+                    } catch (error: Exception) {
+                        if (error is CancellationException) throw error
+                        if (error is ArchiveHttpException && error.status == 401) {
+                            withContext(Dispatchers.Main) { notifyListeners("remoteExpired", JSObject()) }
+                            break
+                        }
+                    }
+                    delay(1500)
+                }
+            } else null
+            call.resolve()
+        }
+    }
+
+    private fun sharedCall(call: PluginCall, work: suspend (String) -> JSObject) {
+        scope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    work(sharedArchive.network.origin(call.getString("origin").orEmpty()))
+                }
+                call.resolve(result)
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                if (error is ArchiveHttpException && error.status == 401) notifyListeners("remoteExpired", JSObject())
+                call.reject(error.message ?: "归档同步失败")
+            }
         }
     }
 
@@ -346,6 +474,27 @@ class LocalArchivePlugin : Plugin() {
         } finally {
             StrictMode.setVmPolicy(originalPolicy)
         }
+    }
+
+    @PluginMethod
+    fun authorizeImportFolder(call: PluginCall) {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+        }
+        startActivityForResult(call, intent, "onImportFolderAuthorized")
+    }
+
+    @ActivityCallback
+    private fun onImportFolderAuthorized(call: PluginCall?, result: ActivityResult) {
+        if (call == null) return
+        val uri = result.data?.data
+        if (result.resultCode != android.app.Activity.RESULT_OK || uri == null) {
+            call.resolve(JSObject().put("granted", false))
+            return
+        }
+        runCatching { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+            .onSuccess { call.resolve(JSObject().put("granted", true)) }
+            .onFailure { call.reject(it.message ?: "无法重新授权原下载目录") }
     }
 
     @PluginMethod

@@ -189,14 +189,15 @@ test('folder, login, and destructive confirmation close before navigation; clear
   await page.getByRole('button', { name: '打开 X 登录', exact: true }).click();
   await page.getByRole('button', { name: '管理 X 登录', exact: true }).waitFor();
   await page.getByRole('button', { name: '历史', exact: true }).click();
-  await page.getByRole('button', { name: '清除', exact: true }).click();
+  await page.getByRole('button', { name: '清除失败记录', exact: true }).click();
   await nativeBack(page);
   await page.getByRole('alertdialog').waitFor({ state: 'hidden' });
   assert.equal(await page.getByRole('alertdialog').count(), 0);
   assert.equal(await page.evaluate(() => window.__nativeFixture.calls.some((call) => call.method === 'clearHistory')), false);
-  await page.getByRole('button', { name: '清除', exact: true }).click();
-  await page.getByRole('button', { name: '清除历史', exact: true }).click();
-  await page.getByRole('heading', { name: '这里还很安静' }).waitFor();
+  await page.getByRole('button', { name: '清除失败记录', exact: true }).click();
+  await page.getByRole('alertdialog').getByRole('button', { name: '清除失败记录', exact: true }).click();
+  await page.getByRole('alertdialog').waitFor({ state: 'hidden' });
+  assert.ok(await page.locator('.history-post-list .job-card').count());
   assert.equal(await page.evaluate(() => window.__nativeFixture.calls.filter((call) => call.method === 'clearHistory').length), 1);
 });
 

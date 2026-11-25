@@ -131,6 +131,25 @@ export class CategoryStore {
     });
   }
 
+  mergeImported(tweetId: string | undefined, names: string[]): Promise<void> {
+    if (!names.length) return Promise.resolve();
+    const normalized = names.map(normalizeCategoryName);
+    return this.enqueue((draft) => {
+      const assigned = new Set(draft.assignments.filter((item) => item.tweetId === tweetId).map((item) => item.categoryId));
+      for (const name of normalized) {
+        let category = draft.categories.find((item) => item.normalizedName === name.normalizedName);
+        if (!category) {
+          category = { ...name, id: randomUUID(), createdAt: new Date().toISOString() };
+          draft.categories.push(category);
+        }
+        if (tweetId && !assigned.has(category.id)) {
+          draft.assignments.push({ tweetId, categoryId: category.id });
+          assigned.add(category.id);
+        }
+      }
+    });
+  }
+
   rename(id: string, rawName: unknown): Promise<StoredCategory> {
     const { name, normalizedName } = normalizeCategoryName(rawName);
     return this.enqueue((draft) => {

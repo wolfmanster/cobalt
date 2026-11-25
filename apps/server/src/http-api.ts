@@ -4,8 +4,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express, { type Express, type NextFunction, type Response } from 'express';
-import cors from 'cors';
 import { z } from 'zod';
+import { archiveAuth } from './archive-auth.js';
+import { registerArchiveSync } from './archive-sync.js';
 import { listAuthors, listCategorySummaries, listDownloadedPosts, parsePage } from './archive-query.js';
 import { ArchiveError, CategoryStore, type StoredCategory } from './categories.js';
 import { jobList } from './job-list.js';
@@ -14,6 +15,7 @@ import { DownloadQueue } from './queue.js';
 import { JobStore } from './store.js';
 import { parseXPostUrl } from './x-url.js';
 import type { DownloadJob } from './types.js';
+import { XSessionConfigurationError, XSessionStorageError, XSessionStore } from './x-session-store.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -22,11 +24,12 @@ export interface RunningApp {
   store: JobStore;
   queue: DownloadQueue;
   categories: CategoryStore;
+  sessions: XSessionStore;
   dataDir: string;
 }
 
 function publicJob(job: DownloadJob) {
-  const { avatarPath: _legacyAvatarPath, ...visibleJob } = job as DownloadJob & { avatarPath?: string };
+  const { avatarPath: _legacyAvatarPath, importedRevision: _revision, ...visibleJob } = job as DownloadJob & { avatarPath?: string };
   return {
     ...visibleJob,
     metadata: job.metadata,
@@ -47,23 +50,26 @@ function sendError(res: Response, error: unknown, next: NextFunction) {
   return next(error);
 }
 
-export async function createApp(options: { dataDir?: string; clientDist?: string } = {}): Promise<RunningApp> {
+export async function createApp(options: {
+  dataDir?: string; clientDist?: string; xSessionEncryptionKey?: string;
+  archiveUsername?: string; archivePassword?: string; insecureLoopback?: boolean;
+} = {}): Promise<RunningApp> {
   const dataDir = path.resolve(options.dataDir ?? process.env.DATA_DIR ?? path.join(__dirname, '../../../data'));
   const categories = new CategoryStore(dataDir);
   await categories.init();
-  const store = new JobStore(dataDir, categories);
+  const store = new JobStore(dataDir);
   await store.init();
-  const queue = new DownloadQueue(store);
+  const sessions = new XSessionStore(dataDir, options.xSessionEncryptionKey ?? process.env.X_SESSION_ENCRYPTION_KEY);
+  const queue = new DownloadQueue(store, sessions);
   const app = express();
-  app.use(cors());
+  app.set('trust proxy', 'loopback');
   app.use(express.json({ limit: '1mb' }));
-  app.use('/api', (req, res, next) => {
-    if (req.path === '/events' || req.path.includes('/media/')) return next();
-    res.setHeader('Cache-Control', 'no-store');
-    next();
-  });
+  const auth = await archiveAuth(app, dataDir, options.archiveUsername ?? process.env.ARCHIVE_USERNAME ?? 'archive',
+    options.archivePassword ?? process.env.ARCHIVE_PASSWORD ?? '',
+    options.insecureLoopback ?? process.env.ARCHIVE_INSECURE_LOOPBACK === '1');
 
   const notify = () => queue.emit('change');
+  registerArchiveSync(app, store, categories, notify);
 
   app.get('/api/health', async (_req, res) => {
     const cobaltUrl = (process.env.COBALT_URL ?? 'http://127.0.0.1:9000').replace(/\/$/, '');
@@ -74,6 +80,47 @@ export async function createApp(options: { dataDir?: string; clientDist?: string
       // Health response reports an unavailable dependency.
     }
     res.status(cobalt ? 200 : 503).json({ ok: true, cobalt, cobaltUrl });
+  });
+
+  app.get('/api/x-session', async (_req, res) => {
+    if (!sessions.available) {
+      try {
+        return res.json({ available: false, configured: false, stored: await sessions.hasStoredSession(), error: sessions.configurationMessage });
+      } catch {
+        return res.status(500).json({ available: false, configured: false, error: '无法读取加密的 X 会话文件' });
+      }
+    }
+    try {
+      const configured = await sessions.isConfigured();
+      return res.json({ available: true, configured, stored: configured });
+    } catch (error) {
+      const message = error instanceof XSessionStorageError ? error.message : '无法读取已保存的 X 会话';
+      return res.json({ available: true, configured: false, stored: true, error: message });
+    }
+  });
+
+  app.put('/api/x-session', async (req, res) => {
+    const parsed = z.object({ auth_token: z.string(), ct0: z.string() }).strict().safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: '请提供 auth_token 与 ct0' });
+    try {
+      await sessions.save({ authToken: parsed.data.auth_token, csrfToken: parsed.data.ct0 });
+      return res.json({ available: true, configured: true, stored: true });
+    } catch (error) {
+      if (error instanceof XSessionConfigurationError) return res.status(503).json({ error: error.message });
+      if (error instanceof TypeError) return res.status(400).json({ error: error.message });
+      if (error instanceof XSessionStorageError) return res.status(500).json({ error: error.message });
+      return res.status(500).json({ error: '无法保存加密的 X 会话' });
+    }
+  });
+
+  app.delete('/api/x-session', async (_req, res) => {
+    try {
+      await sessions.clear();
+      return res.json({ available: sessions.available, configured: false, stored: false });
+    } catch (error) {
+      const message = error instanceof XSessionStorageError ? error.message : '无法移除已保存的 X 会话';
+      return res.status(500).json({ error: message });
+    }
   });
 
   app.get('/api/jobs', (req, res) => {
@@ -218,7 +265,13 @@ export async function createApp(options: { dataDir?: string; clientDist?: string
     return res.json(publicJob(store.get(id)!));
   });
 
-  app.delete('/api/history', async (_req, res) => res.json({ removed: await store.clearCompleted() }));
+  app.delete(['/api/history/failed', '/api/history'], async (_req, res, next) => {
+    try {
+      const removed = await store.clearFailed();
+      if (removed) notify();
+      res.json({ removed });
+    } catch (error) { next(error); }
+  });
 
   app.post('/api/open-media-folder', async (_req, res) => {
     const platform = process.platform;
@@ -254,15 +307,23 @@ export async function createApp(options: { dataDir?: string; clientDist?: string
     res.setHeader('Connection', 'keep-alive');
     res.setHeader('X-Accel-Buffering', 'no');
     res.flushHeaders();
-    const send = () => res.write('data: {"updated":true}\n\n');
+    const send = () => auth.current(req) ? res.write('data: {"updated":true}\n\n') : res.end();
     send();
     const listener = () => send();
     queue.on('change', listener);
-    const heartbeat = setInterval(() => res.write(': heartbeat\n\n'), 20_000);
+    const heartbeat = setInterval(() => auth.current(req) ? res.write(': heartbeat\n\n') : res.end(), 20_000);
     req.on('close', () => {
       clearInterval(heartbeat);
       queue.off('change', listener);
     });
+  });
+
+  app.use('/api', (_req, res) => res.status(404).json({ error: '接口不存在' }));
+  app.use((error: { status?: number }, req: express.Request, res: express.Response, next: NextFunction) => {
+    if (!req.path.startsWith('/api/') || res.headersSent) return next(error);
+    const status = error.status && error.status >= 400 && error.status < 500 ? error.status : 500;
+    if (status === 500) console.error('Archive API request failed:', error);
+    return res.status(status).json({ error: status === 500 ? '归档服务处理失败' : '请求格式或大小无效' });
   });
 
   const clientDist = path.resolve(options.clientDist ?? process.env.CLIENT_DIST ?? path.join(__dirname, '../../client/dist'));
@@ -280,5 +341,5 @@ export async function createApp(options: { dataDir?: string; clientDist?: string
   }
 
   queue.restore();
-  return { app, store, queue, categories, dataDir };
+  return { app, store, queue, categories, sessions, dataDir };
 }

@@ -101,10 +101,10 @@ export function installNativeFixture(options = {}) {
     cancelJob: ({ id }) => { const job = jobs.find((item) => item.id === id); job.status = 'canceled'; queueMicrotask(() => emit('jobsChanged')); return job; },
     retryJob: ({ id }) => { const job = jobs.find((item) => item.id === id); job.status = 'queued'; queueMicrotask(() => emit('jobsChanged')); return job; },
     clearHistory: () => {
-      const removed = terminal().length; jobs = jobs.filter((job) => !terminal().includes(job));
-      const liveTweetIds = new Set(jobs.map((job) => job.tweetId));
-      for (const tweetId of Object.keys(assignments)) if (!liveTweetIds.has(tweetId)) delete assignments[tweetId];
-      persistCategories(); queueMicrotask(() => { emit('jobsChanged'); emit('categoriesChanged'); }); return { removed };
+      const removed = jobs.filter((job) => job.status === 'failed').length;
+      jobs = jobs.filter((job) => job.status !== 'failed');
+      queueMicrotask(() => emit('jobsChanged'));
+      return { removed };
     },
     openMedia: () => ({}),
     removeListener: ({ callbackId }) => { listeners.delete(callbackId); return {}; },

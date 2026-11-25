@@ -8,6 +8,8 @@ import { CategoryStore } from './categories.js';
 import { JobStore } from './store.js';
 import type { DownloadJob } from './types.js';
 
+const archiveUsername = 'test';
+const archivePassword = 'archive-fixture-password';
 const servers: Array<{ close: () => Promise<void> }> = [];
 
 afterEach(async () => {
@@ -54,7 +56,18 @@ async function listen(running: RunningApp) {
   servers.push({
     close: () => new Promise((resolve) => server.close(() => resolve())),
   });
-  return `http://127.0.0.1:${address.port}`;
+  const base = `http://127.0.0.1:${address.port}`;
+  const login = await fetch(`${base}/api/account/login`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: archiveUsername, password: archivePassword, deviceName: 'Test' }),
+  });
+  expect(login.status).toBe(200);
+  const cookie = login.headers.get('set-cookie')!.split(';')[0]!;
+  return (route: string, init?: RequestInit) => {
+    const headers = new Headers(init?.headers);
+    headers.set('Cookie', cookie);
+    return fetch(base + route, { ...init, headers });
+  };
 }
 
 describe('category persistence', () => {
@@ -65,20 +78,20 @@ describe('category persistence', () => {
     await fs.writeFile(jobsPath, original);
     const categories = new CategoryStore(dataDir);
     await categories.init();
-    const store = new JobStore(dataDir, categories);
+    const store = new JobStore(dataDir);
     await store.init();
     expect(await fs.readFile(jobsPath, 'utf8')).toBe(original);
     expect(Array.isArray(JSON.parse(original))).toBe(true);
     await expect(fs.access(path.join(dataDir, 'categories.json'))).rejects.toThrow();
     expect(categories.getSnapshot().categories).toEqual([]);
 
-    const running = await createApp({ dataDir, clientDist: path.join(dataDir, 'no-client') });
+    const running = await createApp({ dataDir, archiveUsername, archivePassword, insecureLoopback: true, clientDist: path.join(dataDir, 'no-client') });
     expect(await fs.readFile(jobsPath, 'utf8')).toBe(original);
-    const base = await listen(running);
-    const listed = await fetch(`${base}/api/tweet-categories`);
+    const request = await listen(running);
+    const listed = await request(`/api/tweet-categories`);
     expect(listed.headers.get('cache-control')).toBe('no-store');
     expect(await listed.json()).toEqual({ categories: [], allTotal: 1, uncategorizedTotal: 1 });
-    const posts = await fetch(`${base}/api/posts`);
+    const posts = await request(`/api/posts`);
     const body = await posts.json() as { jobs: Array<{ tweetId: string; avatarPath?: string }>; total: number };
     expect(body.total).toBe(1);
     expect(body.jobs[0]?.tweetId).toBe('1800000000000000001');
@@ -96,24 +109,24 @@ describe('category persistence', () => {
     const categories = new CategoryStore(dataDir);
     await expect(categories.init()).rejects.toThrow(categoryPath);
     expect(await fs.readFile(jobsPath, 'utf8')).toBe(original);
-    await expect(createApp({ dataDir, clientDist: path.join(dataDir, 'no-client') })).rejects.toThrow(categoryPath);
+    await expect(createApp({ dataDir, archiveUsername, archivePassword, insecureLoopback: true, clientDist: path.join(dataDir, 'no-client') })).rejects.toThrow(categoryPath);
     expect(await fs.readFile(jobsPath, 'utf8')).toBe(original);
   });
 
-  it('persists categories across restart, keeps media when a category is deleted, and clears orphan assignments with history', async () => {
+  it('persists categories across restart, keeps media when a category is deleted, and retains assignments when failed records are cleared', async () => {
     const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'veo-archive-'));
-    const running = await createApp({ dataDir, clientDist: path.join(dataDir, 'no-client') });
-    const base = await listen(running);
+    const running = await createApp({ dataDir, archiveUsername, archivePassword, insecureLoopback: true, clientDist: path.join(dataDir, 'no-client') });
+    const request = await listen(running);
     const changes: string[] = [];
     running.queue.on('change', () => changes.push('change'));
-    const created = await fetch(`${base}/api/tweet-categories`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: ' 旅行 ' }) });
+    const created = await request(`/api/tweet-categories`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: ' 旅行 ' }) });
     expect(created.status).toBe(201);
     const category = await created.json() as { id: string; name: string; normalizedName?: string; tweetCount: number };
     expect(category).toMatchObject({ name: '旅行', tweetCount: 0 });
     expect(category.normalizedName).toBeUndefined();
-    const duplicate = await fetch(`${base}/api/tweet-categories`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: '旅行' }) });
+    const duplicate = await request(`/api/tweet-categories`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: '旅行' }) });
     expect(await duplicate.json()).toEqual({ error: '分类名已存在' });
-    const tooLong = await fetch(`${base}/api/tweet-categories`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: '名'.repeat(31) }) });
+    const tooLong = await request(`/api/tweet-categories`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: '名'.repeat(31) }) });
     expect(await tooLong.json()).toEqual({ error: '分类名需为 1–30 个字符' });
 
     const mediaPath = path.join(dataDir, 'media', 'job-old', '1-pic.jpg');
@@ -125,10 +138,10 @@ describe('category persistence', () => {
     const jobsBefore = await fs.readFile(path.join(dataDir, 'jobs.json'), 'utf8');
     expect(Array.isArray(JSON.parse(jobsBefore))).toBe(true);
 
-    const other = await (await fetch(`${base}/api/tweet-categories`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: '城市' }) })).json() as { id: string };
+    const other = await (await request(`/api/tweet-categories`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: '城市' }) })).json() as { id: string };
     await Promise.all([
-      fetch(`${base}/api/tweet-categories/assignments`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ tweetIds: [stored.tweetId], addCategoryIds: [category.id], removeCategoryIds: [] }) }),
-      fetch(`${base}/api/tweet-categories/assignments`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ tweetIds: [stored.tweetId], addCategoryIds: [other.id], removeCategoryIds: [] }) }),
+      request(`/api/tweet-categories/assignments`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ tweetIds: [stored.tweetId], addCategoryIds: [category.id], removeCategoryIds: [] }) }),
+      request(`/api/tweet-categories/assignments`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ tweetIds: [stored.tweetId], addCategoryIds: [other.id], removeCategoryIds: [] }) }),
     ]);
     expect(await fs.readFile(path.join(dataDir, 'jobs.json'), 'utf8')).toBe(jobsBefore);
     const saved = JSON.parse(await fs.readFile(path.join(dataDir, 'categories.json'), 'utf8')) as { assignments: Array<{ categoryId: string }> };
@@ -138,28 +151,29 @@ describe('category persistence', () => {
     await reloaded.init();
     expect(reloaded.getSnapshot().categories.map((item) => item.name).sort()).toEqual(['城市', '旅行']);
 
-    const removed = await fetch(`${base}/api/tweet-categories/${encodeURIComponent(category.id)}`, { method: 'DELETE' });
+    const removed = await request(`/api/tweet-categories/${encodeURIComponent(category.id)}`, { method: 'DELETE' });
     expect(await removed.json()).toEqual({ deleted: true });
     expect(await fs.readFile(mediaPath, 'utf8')).toBe('jpeg');
-    const afterDelete = await (await fetch(`${base}/api/tweet-categories`)).json() as { categories: Array<{ name: string }>; uncategorizedTotal: number };
+    const afterDelete = await (await request(`/api/tweet-categories`)).json() as { categories: Array<{ name: string }>; uncategorizedTotal: number };
     expect(afterDelete.categories.map((item) => item.name)).toEqual(['城市']);
     expect(afterDelete.uncategorizedTotal).toBe(0);
 
-    const missing = await fetch(`${base}/api/tweet-categories/missing`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: '没有' }) });
+    const missing = await request(`/api/tweet-categories/missing`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: '没有' }) });
     expect(await missing.json()).toEqual({ error: '分类不存在' });
-    const refreshed = await fetch(`${base}/api/tweet-categories/assignments`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ tweetIds: [stored.tweetId], addCategoryIds: ['missing'], removeCategoryIds: [] }) });
+    const refreshed = await request(`/api/tweet-categories/assignments`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ tweetIds: [stored.tweetId], addCategoryIds: ['missing'], removeCategoryIds: [] }) });
     expect(await refreshed.json()).toEqual({ error: '分类已不存在，请刷新后重试' });
-    const emptySelection = await fetch(`${base}/api/tweet-categories/assignments`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ tweetIds: ['  '], addCategoryIds: [], removeCategoryIds: [] }) });
+    const emptySelection = await request(`/api/tweet-categories/assignments`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ tweetIds: ['  '], addCategoryIds: [], removeCategoryIds: [] }) });
     expect(await emptySelection.json()).toEqual({ error: '请选择至少一条推文' });
 
-    const cleared = await fetch(`${base}/api/history`, { method: 'DELETE' });
+    running.store.set({ ...stored, id: 'job-failed', tweetId: '43', status: 'failed', media: [] });
+    const cleared = await request(`/api/history/failed`, { method: 'DELETE' });
     expect(await cleared.json()).toEqual({ removed: 1 });
-    await expect(fs.access(mediaPath)).rejects.toThrow();
+    expect(await fs.readFile(mediaPath, 'utf8')).toBe('jpeg');
+    expect(running.store.list().map((job) => job.id)).toEqual([stored.id]);
     const afterClear = JSON.parse(await fs.readFile(path.join(dataDir, 'categories.json'), 'utf8')) as { categories: Array<{ name: string }>; assignments: unknown[] };
     expect(afterClear.categories.map((item) => item.name)).toEqual(['城市']);
-    expect(afterClear.assignments).toEqual([]);
+    expect(afterClear.assignments).toEqual([{ tweetId: stored.tweetId, categoryId: other.id }]);
     expect(Array.isArray(JSON.parse(await fs.readFile(path.join(dataDir, 'jobs.json'), 'utf8')))).toBe(true);
     expect(changes.length).toBeGreaterThan(0);
   });
 });
-

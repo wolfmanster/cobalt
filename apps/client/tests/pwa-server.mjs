@@ -110,11 +110,13 @@ export function startPwaFixture() {
   const assignments = [];
   let cobalt = true;
   let posts = 0;
+  let tickerEnabled = false;
   const sse = new Set();
   const requests = [];
 
   const notify = () => { for (const response of sse) response.write('data: {"updated":true}\n\n'); };
   const timer = setInterval(() => {
+    if (!tickerEnabled) return;
     const active = jobs.find((job) => job.id === 'active-job' && job.status === 'downloading');
     if (!active) return;
     active.progress = (active.progress + 10) % 100;
@@ -330,6 +332,7 @@ export function startPwaFixture() {
         origin: `http://127.0.0.1:${address.port}`,
         requests,
         setCobalt(value) { cobalt = value; },
+        setTickerEnabled(value) { tickerEnabled = value; },
         postCount: () => posts,
         reset() {
           const fresh = seedJobs();

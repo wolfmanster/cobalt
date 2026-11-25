@@ -67,9 +67,10 @@ async function pageFor(t, { share = 'off', cobalt = true } = {}) {
   return page;
 }
 
-async function freshPage(t, options) {
+async function freshPage(t, { ticker = false, ...options } = {}) {
   const page = await pageFor(t, options);
   fixture.reset();
+  fixture.setTickerEnabled(ticker);
   await page.reload();
   await page.locator('.native-navigation').waitFor();
   return page;
@@ -121,7 +122,7 @@ test('more than 200 links are refused before a request', async (t) => {
 });
 
 test('cancel and retry survive a closed page because the fixture keeps moving', async (t) => {
-  const page = await freshPage(t);
+  const page = await freshPage(t, { ticker: true });
   await page.getByRole('button', { name: '取消', exact: true }).click();
   await page.getByRole('button', { name: '取消', exact: true }).waitFor({ state: 'hidden' });
   await page.getByRole('button', { name: '历史', exact: true }).click();

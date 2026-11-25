@@ -1,5 +1,12 @@
 import { registerPlugin, type PluginListenerHandle } from '@capacitor/core';
-import type { DownloadJob } from './types';
+import type { DownloadJob, PostMetadata } from './types';
+import type { ArchiveCatalog } from './archive-catalog';
+
+export interface ImportReport {
+  merged: string[];
+  missing: { tweetId: string; filename: string }[];
+  permissions: { tweetId: string; filename: string }[];
+}
 
 export interface DownloadedAuthor {
   authorKey: string;
@@ -24,6 +31,15 @@ export interface DownloadFolder {
 }
 
 export interface LocalArchivePlugin {
+  remoteRequest(input: { origin: string; path: string; method: string; body?: string }): Promise<{ status: number; data: { error?: string } }>;
+  watchArchive(input: { origin: string; enabled: boolean }): Promise<void>;
+  loadCatalog(input: { origin: string }): Promise<{ catalog?: ArchiveCatalog }>;
+  saveCatalog(input: { origin: string; catalog: ArchiveCatalog }): Promise<void>;
+  importArchive(input: { origin: string; retry?: boolean }): Promise<ImportReport>;
+  authorizeImportFolder(): Promise<{ granted: boolean }>;
+  findCopies(input: { origin: string; hashes: string[] }): Promise<{ copies: Record<string, string> }>;
+  saveCopy(input: { origin: string; media: { sha256: string; size: number; filename: string; previewUrl: string }; tweetId: string; metadata?: PostMetadata; chunkSize: number }): Promise<{ uri: string }>;
+  openSyncedFile(input: { origin: string; sha256: string }): Promise<void>;
   listJobs(input?: { historyOffset?: number; historyLimit?: number }): Promise<{ jobs: DownloadJob[]; historyTotal: number; completedToday: number }>;
   listDownloadedPosts(input: { authorKey?: string; categoryId?: string; query: string; offset: number; limit: number }): Promise<{ jobs: DownloadJob[]; total: number }>;
   listAuthors(input: { query: string; offset: number; limit: number }): Promise<{ authors: DownloadedAuthor[]; total: number }>;
@@ -54,6 +70,8 @@ export interface LocalArchivePlugin {
   addListener(eventName: 'jobsChanged', listenerFunc: () => void): Promise<PluginListenerHandle>;
   addListener(eventName: 'categoriesChanged', listenerFunc: () => void): Promise<PluginListenerHandle>;
   addListener(eventName: 'sharedContent', listenerFunc: (event: { text: string }) => void): Promise<PluginListenerHandle>;
+  addListener(eventName: 'remoteChanged', listenerFunc: () => void): Promise<PluginListenerHandle>;
+  addListener(eventName: 'remoteExpired', listenerFunc: () => void): Promise<PluginListenerHandle>;
 }
 
 export const LocalArchive = registerPlugin<LocalArchivePlugin>('LocalArchive');

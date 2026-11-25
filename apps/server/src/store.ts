@@ -1,6 +1,5 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import type { CategoryStore } from './categories.js';
 import type { DownloadJob } from './types.js';
 
 export class JobStore {
@@ -10,7 +9,7 @@ export class JobStore {
   private readonly filePath: string;
   private saveChain = Promise.resolve();
 
-  constructor(dataDir: string, private readonly categories?: CategoryStore) {
+  constructor(dataDir: string) {
     this.dataDir = dataDir;
     this.mediaDir = path.join(dataDir, 'media');
     this.filePath = path.join(dataDir, 'jobs.json');
@@ -43,7 +42,8 @@ export class JobStore {
   }
 
   findByTweetId(tweetId: string): DownloadJob | undefined {
-    return this.list().find((job) => job.tweetId === tweetId && job.status !== 'canceled');
+    const matches = this.list().filter((job) => job.tweetId === tweetId && job.status !== 'canceled');
+    return matches.find((job) => job.status === 'completed') ?? matches[0];
   }
 
   set(job: DownloadJob): void {
@@ -59,34 +59,16 @@ export class JobStore {
     return job;
   }
 
-  async clearCompleted(): Promise<number> {
+  async clearFailed(): Promise<number> {
     let count = 0;
-    const mediaDirectories: string[] = [];
     for (const [id, job] of this.jobs) {
-      if (['completed', 'failed', 'canceled'].includes(job.status)) {
+      if (job.status === 'failed') {
         this.jobs.delete(id);
-        const mediaRoot = path.resolve(this.mediaDir);
-        const directories = new Set(
-          job.media
-            .map((media) => {
-              if (!media.localPath) return undefined;
-              const directory = path.resolve(this.dataDir, path.dirname(media.localPath));
-              return directory.startsWith(`${mediaRoot}${path.sep}`) ? directory : undefined;
-            })
-            .filter((directory): directory is string => Boolean(directory)),
-        );
-        if (!directories.size) directories.add(path.join(this.mediaDir, id));
-        mediaDirectories.push(...directories);
         count += 1;
       }
     }
-    this.queueSave();
-    await Promise.all(mediaDirectories.map((directory) => fs.rm(directory, { recursive: true, force: true })));
+    if (count) this.queueSave();
     await this.flush();
-    if (this.categories) {
-      const completedTweetIds = [...this.jobs.values()].filter((job) => job.status === 'completed').map((job) => job.tweetId);
-      await this.categories.removeOrphanAssignments(completedTweetIds);
-    }
     return count;
   }
 
@@ -98,6 +80,10 @@ export class JobStore {
     const snapshot = JSON.stringify(this.list(), null, 2);
     this.saveChain = this.saveChain
       .catch(() => undefined)
-      .then(() => fs.writeFile(this.filePath, snapshot, 'utf8'));
+      .then(async () => {
+        const temporary = `${this.filePath}.tmp`;
+        await fs.writeFile(temporary, snapshot, 'utf8');
+        await fs.rename(temporary, this.filePath);
+      });
   }
 }

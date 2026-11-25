@@ -20,7 +20,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import { cancelJob, clearHistory, consumeSharedContent, createJobs, createTweetCategory, deleteTweetCategory, getDownloadFolder, openMedia, readClipboardText, renameTweetCategory, retryJob, selectDownloadFolder, setDownloadPath, subscribeCategoryChanges, subscribeJobs, subscribeServerEvents, subscribeSharedContent, xLoginSupported } from './api';
+import { cancelJob, clearHistory, consumeSharedContent, createJobs, createTweetCategory, deleteTweetCategory, getDownloadFolder, openMedia, readClipboardText, renameTweetCategory, retryJob, selectDownloadFolder, setDownloadPath, subscribeCategoryChanges, subscribeJobs, subscribeSharedContent, xLoginSupported } from './api';
 import { downloadFolderSupported, isNativeAndroid, mobileShell, usesLocalArchive } from './platform';
 import { HISTORY_PAGE_SIZE, useJobs } from './hooks/useJobs';
 import { useCategories } from './hooks/useCategories';
@@ -29,7 +29,7 @@ import { useXSession } from './hooks/useXSession';
 import type { DownloadJob, MediaItem } from './types';
 import type { TweetCategory } from './nativeArchive';
 
-export default function App() {
+export default function App({ onArchiveAccount, syncMessage }: { onArchiveAccount: () => void; syncMessage: string }) {
   const mediaViewer = useMediaViewer();
   const { serviceHealthy, offline, applyUpdate } = useRuntimeStatus();
   const { categories, allDownloadedCount, uncategorizedCount, revision: archiveRevision, invalidateArchive, refreshCategories, noteCategoryCreated } = useCategories();
@@ -74,7 +74,7 @@ export default function App() {
     }
     setSubmitting(true);
     try {
-      if (downloadFolderSupported && !(await getDownloadFolder()).selected) {
+      if (usesLocalArchive && !(await getDownloadFolder()).selected) {
         setFolderDialogOpen(true);
         setNotice('请先重新设置下载位置');
         return;
@@ -114,23 +114,25 @@ export default function App() {
         }
       }).catch(() => undefined);
     }
+    const shared = subscribeSharedContent((text) => { void receiveSharedContent(text); });
+    void consumeSharedContent().then((result) => { if (result.text) void receiveSharedContent(result.text); });
     if (usesLocalArchive) {
       const events = subscribeJobs(() => { void refreshJobs().catch((error) => setNotice(error.message)); });
-      const shared = subscribeSharedContent((text) => {
-        void receiveSharedContent(text);
-      });
-      void consumeSharedContent().then((result) => {
-        if (result.text) void receiveSharedContent(result.text);
-      });
       return () => { void events.close(); void shared.close(); };
     }
-    void refreshCategories().catch((error) => setNotice(error instanceof Error ? error.message : '无法读取分类'));
-    const events = subscribeServerEvents(() => {
-      void refreshJobs().catch((error) => setNotice(error.message));
-      void refreshCategories().catch((error) => setNotice(error instanceof Error ? error.message : '无法刷新分类'));
+    const refresh = () => {
+      void refreshJobs().catch(() => undefined);
+      void refreshCategories().catch(() => undefined);
       invalidateArchive();
-    });
-    return () => { void events.close(); };
+    };
+    refresh();
+    window.addEventListener('archive-server-changed', refresh);
+    window.addEventListener('archive-catalog-changed', refresh);
+    return () => {
+      void shared.close();
+      window.removeEventListener('archive-server-changed', refresh);
+      window.removeEventListener('archive-catalog-changed', refresh);
+    };
   }, [invalidateArchive, receiveSharedContent, refreshCategories, refreshJobs]);
 
   useEffect(() => {
@@ -353,9 +355,9 @@ export default function App() {
       await refreshJobs();
       invalidateArchive();
       await refreshCategories();
-      setNotice(`已清除 ${removed} 条历史记录`);
+      setNotice(`已清除 ${removed} 条失败记录`);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : '无法清除历史记录');
+      setNotice(error instanceof Error ? error.message : '无法清除失败记录');
     } finally {
       setClearing(false);
     }
@@ -367,7 +369,7 @@ export default function App() {
 
   async function openJobMedia(media: MediaItem) {
     try {
-      await openMedia({ id: media.id, downloadUrl: media.downloadUrl });
+      await openMedia({ id: media.id, downloadUrl: media.downloadUrl, sha256: media.sha256 });
     } catch (error) {
       setNotice(error instanceof Error ? error.message : '无法打开媒体文件');
     }
@@ -497,8 +499,8 @@ export default function App() {
       <NativeHeader tab={tab} folderReady={folderReady} folderLabel={folderLabel}
         choosingFolder={choosingFolder} sessionConfigured={sessionConfigured} sessionBusy={sessionBusy}
         serviceHealthy={serviceHealthy} showAndroidChrome={isNativeAndroid} showBrowserSession={!usesLocalArchive} onFolder={() => setFolderDialogOpen(true)}
-        onAccount={() => setShowSessionPanel((visible) => !visible)} />
-      {!isNativeAndroid && offline && <div className="offline-hint" role="status">当前离线，归档仍在服务器</div>}
+        onAccount={() => setShowSessionPanel((visible) => !visible)} onArchiveAccount={onArchiveAccount} />
+      {!usesLocalArchive && (syncMessage || offline) && <div className="offline-hint" role="status">{syncMessage || '正在离线使用'}</div>}
       {applyUpdate && <div className="update-hint" role="status">有新版本，刷新后更新<button type="button" onClick={() => applyUpdate()}>刷新</button></div>}
 
       <main id="top" className="native-main">
@@ -544,8 +546,8 @@ export default function App() {
               <section className={`native-page ${tab === 'history' ? 'is-current' : ''}`} aria-label="历史">
                 <section className="workspace native-history-workspace">
                   <div className="workspace-head">
-                    <div className="workspace-title"><h2>本地归档</h2><p>按帖子或作者浏览</p></div>
-                    {historyTotal > 0 && <button className="clear-button" type="button" onClick={requestClearHistory} disabled={clearing}>{clearing ? <LoaderCircle className="spin" size={15} /> : <Trash2 size={15} />}{clearing ? '正在清除' : '清除'}</button>}
+                    <div className="workspace-title"><h2>{usesLocalArchive ? '本地归档' : '共享归档'}</h2><p>按帖子或作者浏览</p></div>
+                    {historyTotal > 0 && <button className="clear-button" type="button" onClick={requestClearHistory} disabled={clearing}>{clearing ? <LoaderCircle className="spin" size={15} /> : <Trash2 size={15} />}{clearing ? '正在清除' : '清除失败记录'}</button>}
                   </div>
                   <div className="archive-view-tabs" role="tablist" aria-label="历史浏览方式">
                     <button type="button" role="tab" aria-selected={historyView === 'all'} className={historyView === 'all' ? 'selected' : ''} onClick={() => { clearSelection(); setHistoryView('all'); }}>全部推文</button>
@@ -593,12 +595,12 @@ export default function App() {
 
       <HistoryMediaViewer viewer={mediaViewer} />
 
-      <footer className="page-footer"><span>{isNativeAndroid ? '媒体由本地服务解析与保存' : '媒体由服务器归档'}</span><span>{isNativeAndroid && sessionConfigured ? 'X 会话经 Android Keystore 加密' : !usesLocalArchive && sessionConfigured ? 'X 会话由服务器加密保存' : '公开帖子无需登录'}</span></footer>
+      <footer className="page-footer"><span>{usesLocalArchive ? '媒体由本地服务解析与保存' : '媒体由服务器归档'}</span><span>{usesLocalArchive && sessionConfigured ? 'X 会话经 Android Keystore 加密' : !usesLocalArchive && sessionConfigured ? 'X 会话由服务器加密保存' : '公开帖子无需登录'}</span></footer>
       <NativeNavigation tab={tab} onNavigate={jumpToTab} onCompose={openComposer} />
       {isNativeAndroid && folderDialogOpen && <DownloadFolderDialog subfolder={downloadSubfolder} currentLocation={folderLabel} busy={choosingFolder}
         onSubfolder={setDownloadSubfolder} onSave={() => void saveDownloadSubfolder()}
         onChoose={() => void chooseDownloadFolder()} onClose={() => setFolderDialogOpen(false)} />}
-      {clearConfirmationOpen && <ClearHistoryDialog busy={clearing} removesServerArchive={!isNativeAndroid} onConfirm={() => void clear()}
+      {clearConfirmationOpen && <ClearHistoryDialog busy={clearing} onConfirm={() => void clear()}
         onClose={() => setClearConfirmationOpen(false)} />}
       {categoryTargets !== null && <TweetCategoryDialog tweetIds={categoryTargets} categories={categories}
         onCreateCategory={noteCategoryCreated} onClose={() => setCategoryTargets(null)} onSaved={finishCategoryAssignment} />}

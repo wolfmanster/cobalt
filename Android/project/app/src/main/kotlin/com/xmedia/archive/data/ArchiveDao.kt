@@ -5,6 +5,7 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
+import androidx.room.Upsert
 import kotlinx.coroutines.flow.Flow
 
 data class AuthorAggregate(
@@ -30,6 +31,48 @@ data class TweetCategoryAssignment(
 
 @Dao
 interface ArchiveDao {
+    @Query("SELECT * FROM jobs WHERE status = 'completed' ORDER BY createdAt, id")
+    suspend fun legacyDownloads(): List<JobEntity>
+
+    @Query("SELECT * FROM synced_media WHERE server = :server AND sha256 = :sha256")
+    suspend fun syncedMedia(server: String, sha256: String): SyncedMediaEntity?
+
+    @Query("SELECT * FROM synced_media WHERE server = :server AND ready = 1")
+    suspend fun syncedCopies(server: String): List<SyncedMediaEntity>
+
+    @Upsert
+    suspend fun saveSyncedMedia(media: SyncedMediaEntity)
+
+    @Query("SELECT * FROM archive_imports WHERE server = :server")
+    suspend fun archiveImports(server: String): List<ArchiveImportEntity>
+
+    @Upsert
+    suspend fun saveArchiveImport(record: ArchiveImportEntity)
+
+    @Query("SELECT * FROM synced_catalog WHERE server = :server")
+    suspend fun syncedCatalog(server: String): List<SyncedCatalogEntity>
+
+    @Query("DELETE FROM synced_catalog WHERE server = :server")
+    suspend fun deleteSyncedCatalog(server: String)
+
+    @Insert
+    suspend fun insertSyncedCatalog(rows: List<SyncedCatalogEntity>)
+
+    @Transaction
+    suspend fun replaceSyncedCatalog(server: String, rows: List<SyncedCatalogEntity>) {
+        deleteSyncedCatalog(server)
+        insertSyncedCatalog(rows)
+    }
+
+    @Query("DELETE FROM jobs WHERE status = 'failed'")
+    suspend fun deleteFailedJobs(): Int
+
+    @Transaction
+    suspend fun clearFailedJobs(): Int {
+        val count = deleteFailedJobs()
+        deleteOrphanMedia()
+        return count
+    }
     @Query("SELECT * FROM jobs ORDER BY createdAt DESC")
     fun observeJobs(): Flow<List<JobEntity>>
 

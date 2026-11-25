@@ -1,6 +1,16 @@
 import { Capacitor } from '@capacitor/core';
 
-export const PWA_BUILD_ID = 'veo-pwa-1';
+declare const __PWA_BUILD_ID__: string;
+export const PWA_BUILD_ID = __PWA_BUILD_ID__;
+
+function canServeOfflineMedia(worker: ServiceWorker | null | undefined) {
+  const version = worker && new URL(worker.scriptURL).searchParams.get('v');
+  return Boolean(version && version !== 'veo-pwa-1');
+}
+
+export function offlineMediaWorkerReady() {
+  return canServeOfflineMedia(navigator.serviceWorker?.controller);
+}
 
 export function registerWebServiceWorker(onUpdate: (apply: () => void) => void): () => void {
   if (!import.meta.env.PROD || Capacitor.isNativePlatform() || !('serviceWorker' in navigator)) return () => undefined;
@@ -16,12 +26,17 @@ export function registerWebServiceWorker(onUpdate: (apply: () => void) => void):
     if (disposed) return;
     const announce = () => {
       const waiting = registration.waiting;
-      if (waiting && navigator.serviceWorker.controller) onUpdate(() => {
+      const active = navigator.serviceWorker.controller;
+      if (!waiting || !active) return;
+      const apply = () => {
         reloadOnControl = true;
         waiting.postMessage({ type: 'SKIP_WAITING' });
-      });
+      };
+      if (!canServeOfflineMedia(active)) apply();
+      else onUpdate(apply);
     };
     announce();
+    registration.installing?.addEventListener('statechange', announce);
     registration.addEventListener('updatefound', () => {
       registration.installing?.addEventListener('statechange', announce);
     });

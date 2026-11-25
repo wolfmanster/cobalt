@@ -1,4 +1,6 @@
 import { Capacitor } from '@capacitor/core';
+import { useEffect, useState } from 'react';
+import { webCopyBlob } from '../web-offline-media';
 import type { MediaItem } from '../types';
 
 function revealVideoPreview(video: HTMLVideoElement) {
@@ -7,6 +9,7 @@ function revealVideoPreview(video: HTMLVideoElement) {
 }
 
 export function MediaPreview({ media, onAspectRatio, controls = true, loading = 'lazy' }: { media: MediaItem; onAspectRatio?: (ratio: number) => void; controls?: boolean; loading?: 'lazy' | 'eager' }) {
+  if (!media.previewUrl) return <span>{media.filename} · 等待本机副本</span>;
   const previewUrl = Capacitor.convertFileSrc(media.previewUrl);
   const gifPlaysAsVideo = media.kind === 'gif' && (media.contentType ?? '').startsWith('video/');
   if ((media.kind === 'image' || media.kind === 'gif') && !gifPlaysAsVideo) {
@@ -15,9 +18,38 @@ export function MediaPreview({ media, onAspectRatio, controls = true, loading = 
       if (image.naturalWidth && image.naturalHeight) onAspectRatio?.(image.naturalWidth / image.naturalHeight);
     }} />;
   }
+  return <VideoPreview media={media} previewUrl={previewUrl} controls={controls} onAspectRatio={onAspectRatio} />;
+}
+
+const prefersOfflineBlob = /iP(?:hone|ad|od)/.test(navigator.userAgent) ||
+  (/AppleWebKit/.test(navigator.userAgent) && !/Chrome|Chromium|Edg/.test(navigator.userAgent));
+
+function VideoPreview({ media, previewUrl, controls, onAspectRatio }: {
+  media: MediaItem; previewUrl: string; controls: boolean; onAspectRatio?: (ratio: number) => void;
+}) {
+  const hash = controls && prefersOfflineBlob && media.previewUrl.startsWith('/__offline-media/') ? media.sha256 : undefined;
+  const [local, setLocal] = useState<{ hash: string; url: string }>();
+  useEffect(() => {
+    if (!hash) return;
+    const controller = new AbortController();
+    let url = '';
+    void webCopyBlob(hash, controller.signal).then((blob) => {
+      if (controller.signal.aborted) return;
+      if (blob) url = URL.createObjectURL(blob);
+      setLocal({ hash, url });
+    }).catch(() => { if (!controller.signal.aborted) setLocal({ hash, url: '' }); });
+    return () => {
+      controller.abort();
+      if (url) URL.revokeObjectURL(url);
+      setLocal(undefined);
+    };
+  }, [hash]);
   return (
     <video
-      src={previewUrl}
+      src={hash ? (local?.hash === hash ? local.url || previewUrl : undefined) : previewUrl}
+      onError={() => {
+        if (hash && local?.hash === hash && local.url) setLocal({ hash, url: '' });
+      }}
       controls={controls}
       playsInline
       preload="metadata"

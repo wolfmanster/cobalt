@@ -94,7 +94,9 @@ export async function streamJobMedia(req: Request, res: Response, input: {
   const range = parseByteRange(typeof req.headers.range === 'string' ? req.headers.range : undefined, size);
   res.setHeader('Accept-Ranges', 'bytes');
   res.setHeader('Content-Type', mediaContentType(media.contentType, media.filename));
-  res.setHeader('Cache-Control', 'private, max-age=3600');
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Security-Policy', 'sandbox');
   if (input.download) res.setHeader('Content-Disposition', contentDispositionAttachment(media.filename));
   if (range === 'unsatisfiable') {
     res.status(416);

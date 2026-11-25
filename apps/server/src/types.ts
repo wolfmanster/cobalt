@@ -42,6 +42,8 @@ export interface DownloadJob {
   createdAt: string;
   updatedAt: string;
   completedAt?: string;
+  importedRevision?: string;
+  unavailableMedia?: number;
 }
 
 export interface ParsedPostUrl {

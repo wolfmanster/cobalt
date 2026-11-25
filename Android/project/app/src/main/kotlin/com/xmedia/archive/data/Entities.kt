@@ -67,3 +67,25 @@ data class TweetCategoryAssignmentEntity(
     val tweetId: String,
     val categoryId: String,
 )
+
+@Entity(tableName = "synced_media", primaryKeys = ["server", "sha256"])
+data class SyncedMediaEntity(
+    val server: String,
+    val sha256: String,
+    val size: Long,
+    val uri: String,
+    val contentType: String,
+    val ready: Boolean,
+)
+
+@Entity(tableName = "archive_imports", primaryKeys = ["server", "jobId"])
+data class ArchiveImportEntity(
+    val server: String,
+    val jobId: String,
+    val tweetId: String,
+    val missing: String,
+    val permissions: String,
+)
+
+@Entity(tableName = "synced_catalog", primaryKeys = ["server", "key"])
+data class SyncedCatalogEntity(val server: String, val key: String, val json: String)

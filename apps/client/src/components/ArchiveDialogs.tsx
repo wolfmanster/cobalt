@@ -46,15 +46,13 @@ export function DownloadFolderDialog({ subfolder, currentLocation, busy, onSubfo
   </DialogFrame>;
 }
 
-export function ClearHistoryDialog({ busy, removesServerArchive = false, onConfirm, onClose }: { busy: boolean; removesServerArchive?: boolean; onConfirm: () => void; onClose: () => void }) {
+export function ClearHistoryDialog({ busy, onConfirm, onClose }: { busy: boolean; onConfirm: () => void; onClose: () => void }) {
   return <DialogFrame alert labelledBy="clear-history-title" describedBy="clear-history-description" onClose={onClose}>
-    <h2 id="clear-history-title">清除下载历史？</h2>
-    <p id="clear-history-description">{removesServerArchive
-      ? '此操作会删除完成、失败和已取消的记录，并删除服务器上对应的归档媒体，且不能恢复。'
-      : '此操作会移除完成、失败和取消任务的历史记录，但不会删除已保存的媒体文件。'}</p>
+    <h2 id="clear-history-title">清除失败记录？</h2>
+    <p id="clear-history-description">仅清除下载失败的任务记录。</p>
     <div className="confirmation-actions">
       <button type="button" onClick={onClose} disabled={busy}>取消</button>
-      <button type="button" className="confirmation-danger" onClick={onConfirm} disabled={busy}>{busy ? '正在清除' : '清除历史'}</button>
+      <button type="button" className="confirmation-danger" onClick={onConfirm} disabled={busy}>{busy ? '正在清除' : '清除失败记录'}</button>
     </div>
   </DialogFrame>;
 }

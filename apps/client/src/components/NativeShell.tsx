@@ -1,4 +1,4 @@
-import { ArrowDownToLine, Check, FolderCheck, FolderOpen, History, Home, Link2, LoaderCircle, Search, ShieldCheck } from 'lucide-react';
+import { ArrowDownToLine, Check, FolderCheck, FolderOpen, History, Home, Link2, LoaderCircle, Search, ShieldCheck, UserRound } from 'lucide-react';
 
 export type NativeTab = 'queue' | 'search' | 'history';
 const PAGE_COPY: Record<NativeTab, { title: string; subtitle: string }> = {
@@ -7,10 +7,10 @@ const PAGE_COPY: Record<NativeTab, { title: string; subtitle: string }> = {
   history: { title: '历史记录', subtitle: '已保存的内容，都在这里' },
 };
 
-export function NativeHeader({ tab, folderReady, folderLabel, choosingFolder, sessionConfigured, sessionBusy, serviceHealthy, showAndroidChrome, showBrowserSession, onFolder, onAccount }: {
+export function NativeHeader({ tab, folderReady, folderLabel, choosingFolder, sessionConfigured, sessionBusy, serviceHealthy, showAndroidChrome, showBrowserSession, onFolder, onAccount, onArchiveAccount }: {
   tab: NativeTab; folderReady: boolean; folderLabel: string; choosingFolder: boolean;
   sessionConfigured: boolean; sessionBusy: boolean; serviceHealthy: boolean | null; showAndroidChrome: boolean; showBrowserSession: boolean;
-  onFolder: () => void; onAccount: () => void;
+  onFolder: () => void; onAccount: () => void; onArchiveAccount: () => void;
 }) {
   const copy = PAGE_COPY[tab];
   const serviceLabel = serviceHealthy === null
@@ -22,6 +22,7 @@ export function NativeHeader({ tab, folderReady, folderLabel, choosingFolder, se
     <div className="native-header-copy">{tab !== 'history' && <h1>{copy.title}</h1>}<p>{copy.subtitle}</p></div>
     <div className="native-header-actions">
       <span className={`native-service-dot ${serviceHealthy === false ? 'is-offline' : serviceHealthy === null ? 'is-checking' : ''}`} role="status" aria-label={serviceLabel} title={serviceLabel} />
+      {tab === 'queue' && <button type="button" className="native-icon-button" onClick={onArchiveAccount} title="归档账号" aria-label="归档账号"><UserRound size={20} /></button>}
       {showAndroidChrome && tab === 'queue' && <button type="button" className="native-icon-button" onClick={onFolder} disabled={choosingFolder} title={`下载位置：${folderLabel}`} aria-label="更改下载位置">
         {choosingFolder ? <LoaderCircle className="spin" size={20} /> : folderReady ? <FolderCheck size={20} /> : <FolderOpen size={20} />}
       </button>}

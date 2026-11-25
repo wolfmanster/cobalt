@@ -9,7 +9,7 @@ const server = app.listen(port, host, () => {
   console.log(`X Media Archive: http://${host}:${port}`);
   console.log(`Cobalt: ${process.env.COBALT_URL ?? 'http://127.0.0.1:9000'}`);
   if (!isLoopback(host)) {
-    console.warn(`警告：HOST=${host} 不是回环地址。当前 API 没有认证，知道地址的人可以读取队列、预览媒体并清除历史。不要把 ${port} 或 Cobalt 端口暴露到公网。`);
+    console.warn(`HOST=${host}。请通过可信的同机 HTTPS 反向代理访问归档服务。`);
   }
 });
 

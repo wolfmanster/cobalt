@@ -7,7 +7,8 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [JobEntity::class, MediaEntity::class, TweetCategoryEntity::class, TweetCategoryAssignmentEntity::class], version = 2, exportSchema = false)
+@Database(entities = [JobEntity::class, MediaEntity::class, TweetCategoryEntity::class, TweetCategoryAssignmentEntity::class,
+    SyncedMediaEntity::class, ArchiveImportEntity::class, SyncedCatalogEntity::class], version = 3, exportSchema = false)
 abstract class ArchiveDatabase : RoomDatabase() {
     abstract fun dao(): ArchiveDao
 
@@ -22,6 +23,14 @@ abstract class ArchiveDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("CREATE TABLE IF NOT EXISTS synced_media (server TEXT NOT NULL, sha256 TEXT NOT NULL, size INTEGER NOT NULL, uri TEXT NOT NULL, contentType TEXT NOT NULL, ready INTEGER NOT NULL, PRIMARY KEY (server, sha256))")
+                database.execSQL("CREATE TABLE IF NOT EXISTS archive_imports (server TEXT NOT NULL, jobId TEXT NOT NULL, tweetId TEXT NOT NULL, missing TEXT NOT NULL, permissions TEXT NOT NULL, PRIMARY KEY (server, jobId))")
+                database.execSQL("CREATE TABLE IF NOT EXISTS synced_catalog (server TEXT NOT NULL, `key` TEXT NOT NULL, json TEXT NOT NULL, PRIMARY KEY (server, `key`))")
+            }
+        }
+
         @Volatile private var instance: ArchiveDatabase? = null
 
         fun get(context: Context): ArchiveDatabase = instance ?: synchronized(this) {
@@ -29,7 +38,7 @@ abstract class ArchiveDatabase : RoomDatabase() {
                 context.applicationContext,
                 ArchiveDatabase::class.java,
                 "x-media-archive.db",
-            ).addMigrations(MIGRATION_1_2).build().also { instance = it }
+            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build().also { instance = it }
         }
     }
 }

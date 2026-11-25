@@ -65,7 +65,7 @@ class ArchiveRepository(context: Context, daoOverride: ArchiveDao? = null) {
     suspend fun replaceMedia(jobId: String, media: List<MediaEntity>) = dao.replaceMedia(jobId, media)
 
     suspend fun clearHistory(): Int {
-        return dao.deleteHistoryAndOrphanMetadata()
+        return dao.clearFailedJobs()
     }
 
     suspend fun retry(id: String): Boolean {

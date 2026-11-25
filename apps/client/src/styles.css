@@ -860,3 +860,17 @@ main { width: min(1120px, calc(100% - 56px)); margin: 0 auto; }
   .job-card.is-history-post .post-text,
   .job-card.is-history-post .media-grid { margin-left: 52px; }
 }
+
+.archive-login-page {
+  min-height: 100svh;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+}
+.archive-account { width: min(100%, 460px); max-height: 85svh; overflow: auto; }
+.archive-account form { display: grid; gap: 12px; }
+.archive-account label { display: grid; gap: 5px; }
+.archive-account input { width: 100%; padding: 9px 12px; color: inherit; background: transparent; border: 1px solid currentColor; border-radius: 8px; }
+.archive-account ul { padding-inline-start: 20px; overflow-wrap: anywhere; }
+.archive-device-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 8px 0; }
+.archive-copy-status { margin: 6px 0; font-size: .82rem; }

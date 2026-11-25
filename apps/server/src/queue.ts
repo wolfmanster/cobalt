@@ -182,6 +182,7 @@ export class DownloadQueue extends EventEmitter {
         progress: 100,
         completedAt: new Date().toISOString(),
       });
+      await this.store.flush();
       this.emitChange();
     } catch (error) {
       this.finishWithError(jobId, controller, error);

@@ -6,6 +6,7 @@ export interface ImportReport {
   merged: string[];
   missing: { tweetId: string; filename: string }[];
   permissions: { tweetId: string; filename: string }[];
+  failed?: { tweetId?: string; message: string }[];
 }
 
 export interface DownloadedAuthor {

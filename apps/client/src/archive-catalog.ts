@@ -1,5 +1,5 @@
 import { LocalArchive, type TweetCategory } from './nativeArchive';
-import { isNativeAndroid, remoteOrigin } from './platform';
+import { archiveSessionKey, isNativeAndroid, remoteOrigin } from './platform';
 import { ArchiveHttpError, remoteRequest } from './archive-transport';
 import { readOffline, writeOffline } from './offline-db';
 import { webCopy, webCopyUrl } from './web-offline-media';
@@ -27,17 +27,28 @@ function useCatalog(value: ArchiveCatalog | undefined) {
 }
 
 export async function localCatalog() {
-  if (!loading) loading = (isNativeAndroid
-    ? LocalArchive.loadCatalog({ origin: remoteOrigin }).then(({ catalog }) => catalog)
-    : readOffline<ArchiveCatalog>('state', key)).then((saved) => {
-    if (!catalog) {
-      persistedVersion = saved?.version;
-      useCatalog(saved);
-    }
-    return catalog;
-  }).catch(() => undefined);
+  if (!isNativeAndroid && !localStorage.getItem(archiveSessionKey)) return undefined;
+  if (!loading) {
+    const pending = (isNativeAndroid
+      ? LocalArchive.loadCatalog({ origin: remoteOrigin }).then(({ catalog }) => catalog)
+      : readOffline<ArchiveCatalog>('state', key)).then((saved) => {
+      if (loading === pending && !catalog) {
+        persistedVersion = saved?.version;
+        useCatalog(saved);
+      }
+      return catalog;
+    }).catch(() => undefined);
+    loading = pending;
+  }
   await loading;
   return catalog;
+}
+
+export function resetArchiveCatalog() {
+  loading = undefined;
+  persistedVersion = undefined;
+  copies.clear();
+  useCatalog(undefined);
 }
 
 export async function pullCatalog(signal: AbortSignal) {
@@ -62,7 +73,8 @@ export async function pullCatalog(signal: AbortSignal) {
       useCatalog(updated);
       try {
         if (isNativeAndroid) await LocalArchive.saveCatalog({ origin: remoteOrigin, catalog: updated });
-        else await writeOffline([['state', key, updated]]);
+        else await writeOffline([['state', key, updated]], signal);
+        signal.throwIfAborted();
         persistedVersion = updated.version;
       }
       catch (error) { catalogChanged(); throw error; }
@@ -96,7 +108,7 @@ export function mediaWork(snapshot: ArchiveCatalog) {
   return [...items.values()];
 }
 
-export async function checkCopies(snapshot: ArchiveCatalog) {
+export async function checkCopies(snapshot: ArchiveCatalog, signal: AbortSignal) {
   let changed = false;
   const work = mediaWork(snapshot);
   const native = isNativeAndroid
@@ -105,6 +117,7 @@ export async function checkCopies(snapshot: ArchiveCatalog) {
   for (const { media } of work) {
     const local = native ? native.copies[media.sha256]
       : offlineMediaWorkerReady() ? await webCopyUrl(media, snapshot.chunkSize) : '';
+    signal.throwIfAborted();
     if ((copies.get(media.sha256) ?? '') === (local ?? '')) continue;
     if (local) copies.set(media.sha256, local);
     else copies.delete(media.sha256);
@@ -121,6 +134,7 @@ export async function saveCopy(post: SyncPost, media: SyncMedia, chunkSize: numb
   } else {
     await webCopy(media, chunkSize, signal);
     const local = offlineMediaWorkerReady() && await webCopyUrl(media, chunkSize);
+    signal.throwIfAborted();
     if (local) copies.set(media.sha256, local);
   }
   catalogChanged();

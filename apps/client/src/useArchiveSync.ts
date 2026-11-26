@@ -29,10 +29,11 @@ export function useArchiveSync(active: boolean) {
       transfer = new AbortController();
       const signal = transfer.signal;
       let remaining = 0;
+      let importMessage = '';
       try {
         const local = await localCatalog();
         if (local) {
-          await checkCopies(local);
+          await checkCopies(local, signal);
           remaining = mediaWork(local).filter(({ media }) => !copyReady(media)).length;
         }
         if (!navigator.onLine) {
@@ -47,14 +48,27 @@ export function useArchiveSync(active: boolean) {
         let catalog = await pullCatalog(signal);
         if (importNeeded) {
           setMessage('正在合并安卓原有下载');
-          const result = await LocalArchive.importArchive({ origin: remoteOrigin, retry: retryImport });
-          signal.throwIfAborted();
-          setReport(result);
+          const manualRetry = retryImport;
           retryImport = false;
           importNeeded = false;
-          catalog = await pullCatalog(signal);
+          try {
+            const result = await LocalArchive.importArchive({ origin: remoteOrigin, retry: manualRetry });
+            signal.throwIfAborted();
+            setReport(result);
+            if (result.failed?.length) {
+              importNeeded = true;
+              retryImport ||= manualRetry;
+              importMessage = '旧下载导入失败 ' + result.failed.length + ' 项 · 将自动重试';
+            }
+            catalog = await pullCatalog(signal);
+          } catch (error) {
+            importNeeded = true;
+            retryImport ||= manualRetry;
+            if (signal.aborted || (error instanceof ArchiveHttpError && error.status === 401)) throw error;
+            importMessage = '旧下载同步待重试 · ' + (error instanceof Error ? error.message : String(error));
+          }
         }
-        await checkCopies(catalog);
+        await checkCopies(catalog, signal);
         const work = mediaWork(catalog).filter(({ media }) => !copyReady(media));
         remaining = work.length;
         let errors = 0;
@@ -73,7 +87,7 @@ export function useArchiveSync(active: boolean) {
             errors++;
           }
         }
-        setMessage(errors ? '待补齐 ' + remaining + ' 个文件 · 将自动重试' : '');
+        setMessage(errors ? '待补齐 ' + remaining + ' 个文件 · 将自动重试' : importMessage);
       } catch (error) {
         if (signal.aborted || stopped) return;
         if (error instanceof ArchiveHttpError && error.status === 401) return;
@@ -103,6 +117,7 @@ export function useArchiveSync(active: boolean) {
       else wake();
     };
     const offline = () => { transfer?.abort(); wake(); };
+    const expired = () => transfer?.abort();
     const server = subscribeServerEvents(() => {
       window.dispatchEvent(new Event('archive-server-changed'));
       if (!serverWake) serverWake = window.setTimeout(() => {
@@ -112,6 +127,7 @@ export function useArchiveSync(active: boolean) {
     });
     const timer = window.setInterval(wake, 30_000);
     window.addEventListener('offline', offline);
+    window.addEventListener('archive-session-expired', expired);
     document.addEventListener('visibilitychange', visibility);
     navigator.serviceWorker?.addEventListener('controllerchange', wake);
     wake();
@@ -122,6 +138,7 @@ export function useArchiveSync(active: boolean) {
       window.clearTimeout(serverWake);
       window.clearInterval(timer);
       window.removeEventListener('offline', offline);
+      window.removeEventListener('archive-session-expired', expired);
       document.removeEventListener('visibilitychange', visibility);
       navigator.serviceWorker?.removeEventListener('controllerchange', wake);
       void server.close().catch(() => undefined);

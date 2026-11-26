@@ -82,6 +82,7 @@ export function JobCard({ job, onAction, onOpenMedia, onPreviewMedia, presentati
   const active = ['queued', 'resolving', 'downloading'].includes(job.status);
   const complete = job.status === 'completed';
   const historical = presentation === 'history';
+  const canRecoverMedia = Boolean(job.archived && (job.unavailableMedia || !job.media.length));
   const totalSize = job.media.reduce((sum, item) => sum + (item.size ?? 0), 0);
   const activeMediaId = job.media[activeMediaIndex]?.id;
   const activeMediaAspectRatio = activeMediaId ? mediaAspectRatios[activeMediaId] : undefined;
@@ -242,9 +243,10 @@ export function JobCard({ job, onAction, onOpenMedia, onPreviewMedia, presentati
         )}
       </div>
 
-      {historical && complete && (onClassify || selectionMode) && <footer className="job-footer history-classification-actions">
+      {historical && complete && (onClassify || selectionMode || canRecoverMedia) && <footer className="job-footer history-classification-actions">
         <span>{selectionMode && selected ? '已选中' : ''}</span>
         <div className="job-actions">
+          {!selectionMode && canRecoverMedia && <button type="button" className="text-button" onClick={() => onAction('retry', job.id)}><RotateCcw size={14} />补下载原文件</button>}
           {selectionMode && <button type="button" className={`text-button ${selected ? 'is-picked' : ''}`} aria-pressed={selected} onClick={() => onToggleSelection?.(job.tweetId)}>
             {selected ? <Check size={15} /> : null}{selected ? '已选择' : '选择'}
           </button>}

@@ -7,7 +7,7 @@ import { createServer } from 'node:http';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { chromium } from 'playwright';
+import { chromium, webkit } from 'playwright';
 import { createApp } from '../../server/dist/http-api.js';
 
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==', 'base64');
@@ -160,6 +160,94 @@ test('PWA resumes downloads, handles storage exhaustion and seeks during offline
   } finally {
     await browser.close();
     await stop();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('remote revocation and logout erase offline media and sign out another tab', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'cobalt-pwa-revoked-'));
+  let browser, server;
+  try {
+    const app = await createApp({ dataDir: root, insecureLoopback: true, archiveUsername: 'test', archivePassword: secret });
+    const hash = createHash('sha256').update(png).digest('hex');
+    const sourceUrl = 'https://x.com/i/status/1990000000000000910';
+    await fs.writeFile(path.join(root, 'media', 'revoked.png'), png);
+    app.store.set({ id: 'revoked', tweetId: '1990000000000000910', sourceUrl, canonicalUrl: sourceUrl,
+      status: 'completed', progress: 100, attempts: 1, createdAt: stamp, updatedAt: stamp, completedAt: stamp,
+      media: [{ id: 'image', kind: 'image', filename: 'revoked.png', contentType: 'image/png', sourceUrl: '',
+        downloadedBytes: png.length, size: png.length, localPath: 'media/revoked.png' }] });
+    await app.store.flush();
+    server = app.app.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const origin = 'http://localhost:' + server.address().port;
+    browser = await (process.env.PWA_BROWSER === 'webkit' ? webkit : chromium).launch();
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    await page.goto(origin);
+    await page.getByLabel('账号', { exact: true }).fill('test');
+    await page.getByLabel('密码', { exact: true }).fill(secret);
+    await page.getByRole('button', { name: '登录', exact: true }).click();
+    await page.getByRole('button', { name: '历史', exact: true }).click();
+    await page.getByText('本机可离线播放', { exact: true }).waitFor();
+
+    const anotherTab = await context.newPage();
+    await anotherTab.goto(origin);
+    await anotherTab.getByRole('button', { name: '历史', exact: true }).waitFor();
+    await anotherTab.waitForFunction(() => Boolean(navigator.serviceWorker.controller));
+    const media = '/__offline-media/' + hash;
+    const cached = await anotherTab.evaluate(async (url) => {
+      const response = await fetch(url);
+      return [response.status, response.headers.get('content-type')];
+    }, media);
+    assert.deepEqual(cached, [200, 'image/png']);
+    const device = await page.evaluate(() => localStorage.getItem('archive-device:'));
+    assert.ok(device);
+    const admin = await fetch(origin + '/api/account/login', { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'test', password: secret, deviceName: 'Other device', bearer: true }) });
+    assert.equal(admin.status, 200);
+    const { token } = await admin.json();
+    assert.equal((await fetch(origin + '/api/account/sessions/' + device, {
+      method: 'DELETE', headers: { Authorization: 'Bearer ' + token },
+    })).status, 200);
+
+    const unauthorized = page.waitForResponse((response) => response.url() === origin + '/api/account' && response.status() === 401);
+    await page.evaluate(() => window.dispatchEvent(new Event('online')));
+    await unauthorized;
+    for (const tab of [page, anotherTab]) await tab.getByRole('button', { name: '登录', exact: true }).waitFor();
+    await anotherTab.waitForFunction(async (url) => (await fetch(url)).status === 404, media);
+    await context.setOffline(true);
+    if (process.env.PWA_BROWSER !== 'webkit') assert.equal(await anotherTab.evaluate(async (url) => (await fetch(url)).status, media), 404);
+    const counts = await anotherTab.evaluate(() => new Promise((resolve, reject) => {
+      const opening = indexedDB.open('cobalt-offline-archive', 1);
+      opening.onerror = () => reject(opening.error);
+      opening.onsuccess = () => {
+        const db = opening.result;
+        const stores = ['state', 'files', 'chunks'];
+        const transaction = db.transaction(stores);
+        const requests = stores.map((store) => transaction.objectStore(store).count());
+        transaction.oncomplete = () => { db.close(); resolve(requests.map((request) => request.result)); };
+        transaction.onabort = () => { db.close(); reject(transaction.error); };
+      };
+    }));
+    assert.deepEqual(counts, [0, 0, 0]);
+
+    await context.setOffline(false);
+    await page.getByLabel('密码', { exact: true }).fill(secret);
+    await page.getByRole('button', { name: '登录', exact: true }).click();
+    await page.getByRole('button', { name: '历史', exact: true }).click();
+    await page.getByText('本机可离线播放', { exact: true }).waitFor();
+    await page.getByRole('button', { name: '首页', exact: true }).click();
+    await page.getByRole('button', { name: '归档账号', exact: true }).click();
+    await page.getByRole('button', { name: '退出登录', exact: true }).click();
+    await page.getByRole('button', { name: '登录', exact: true }).waitFor();
+    await page.waitForFunction(async (url) => (await fetch(url)).status === 404, media);
+  } finally {
+    await browser?.close();
+    if (server) {
+      const done = new Promise((resolve) => server.close(resolve));
+      server.closeAllConnections();
+      await done;
+    }
     await fs.rm(root, { recursive: true, force: true });
   }
 });

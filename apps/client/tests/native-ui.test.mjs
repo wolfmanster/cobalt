@@ -29,7 +29,8 @@ async function nativePage(t, { width = 390, dark = false, fixture = {} } = {}) {
   t.after(async () => { await context.close(); assert.deepEqual(errors, [], 'No uncaught React or bridge errors'); });
   await page.goto(origin);
   await page.locator('.native-navigation').waitFor();
-  await page.waitForFunction(() => window.__nativeFixture.calls.some((call) => call.method === 'listJobs'));
+  await page.waitForFunction((method) => window.__nativeFixture.calls.some((call) => call.method === method),
+    fixture.remoteArchive ? 'remoteRequest' : 'listJobs');
   return page;
 }
 async function assertNoOverflow(page) {
@@ -76,6 +77,21 @@ test('clipboard, link submission, cancellation, and retry retain their bridge ac
   await page.getByRole('button', { name: '历史', exact: true }).click();
   await page.getByRole('button', { name: '重试', exact: true }).first().click();
   await page.waitForFunction(() => window.__nativeFixture.calls.some((call) => call.method === 'retryJob'));
+});
+
+test('shared Android archive saves server media when legacy import fails and shows per-post retry details', async (t) => {
+  const page = await nativePage(t, { fixture: { remoteArchive: true } });
+  const calls = await page.waitForFunction(() => {
+    const methods = window.__nativeFixture.calls.map(({ method }) => method);
+    return methods.includes('saveCopy') ? methods : null;
+  });
+  const methods = await calls.jsonValue();
+  assert.ok(methods.indexOf('importArchive') < methods.indexOf('saveCopy'));
+  await page.getByRole('button', { name: '首页', exact: true }).click();
+  await page.getByRole('button', { name: '归档账号', exact: true }).click();
+  await page.getByRole('button', { name: '重新检查导入与同步', exact: true }).click();
+  await page.getByText('已合并 1 条 · 缺失 0 项 · 需重新授权 0 项 · 待重试 1 项').click();
+  await page.getByText('待重试 · 1990000000000000911 · 模拟单条导入失败').waitFor();
 });
 
 test('search retains its query and native back closes author detail before returning home', async (t) => {

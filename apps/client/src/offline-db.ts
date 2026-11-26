@@ -1,3 +1,5 @@
+import { archiveSessionKey } from './platform';
+
 const name = 'cobalt-offline-archive';
 let connection: Promise<IDBDatabase> | undefined;
 
@@ -24,9 +26,11 @@ export async function readOffline<T>(store: string, key: string): Promise<T | un
   });
 }
 
-export async function writeOffline(entries: [string, string, unknown][]) {
+export async function writeOffline(entries: [string, string, unknown][], signal: AbortSignal) {
   if (!entries.length) return;
   const db = await open();
+  signal.throwIfAborted();
+  if (!localStorage.getItem(archiveSessionKey)) throw new DOMException('归档会话已退出', 'AbortError');
   return new Promise<void>((resolve, reject) => {
     const transaction = db.transaction([...new Set(entries.map(([store]) => store))], 'readwrite');
     transaction.oncomplete = () => resolve();

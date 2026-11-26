@@ -8,6 +8,7 @@ export class JobStore {
   readonly mediaDir: string;
   private readonly filePath: string;
   private saveChain = Promise.resolve();
+  private writeChain = Promise.resolve();
 
   constructor(dataDir: string) {
     this.dataDir = dataDir;
@@ -46,9 +47,23 @@ export class JobStore {
     return matches.find((job) => job.status === 'completed') ?? matches[0];
   }
 
+  findActiveByTweetId(tweetId: string): DownloadJob | undefined {
+    return this.list().find((job) => job.tweetId === tweetId &&
+      ['queued', 'resolving', 'downloading'].includes(job.status));
+  }
+
   set(job: DownloadJob): void {
     this.jobs.set(job.id, job);
     this.queueSave();
+  }
+
+  setPersisted(job: DownloadJob, validate: () => void): Promise<void> {
+    return this.scheduleWrite(async () => {
+      validate();
+      const jobs = this.list().filter((entry) => entry.id !== job.id);
+      await this.write([...jobs, job]);
+      this.jobs.set(job.id, job);
+    });
   }
 
   update(id: string, patch: Partial<DownloadJob>): DownloadJob | undefined {
@@ -73,17 +88,23 @@ export class JobStore {
   }
 
   async flush(): Promise<void> {
-    await this.saveChain;
+    await Promise.all([this.saveChain, this.writeChain]);
   }
 
   private queueSave(): void {
-    const snapshot = JSON.stringify(this.list(), null, 2);
-    this.saveChain = this.saveChain
-      .catch(() => undefined)
-      .then(async () => {
-        const temporary = `${this.filePath}.tmp`;
-        await fs.writeFile(temporary, snapshot, 'utf8');
-        await fs.rename(temporary, this.filePath);
-      });
+    this.saveChain = this.scheduleWrite(() => this.write(this.list()));
+  }
+
+  private scheduleWrite(write: () => Promise<void>): Promise<void> {
+    const task = this.writeChain.then(write);
+    this.writeChain = task.catch(() => undefined);
+    return task;
+  }
+
+  private async write(jobs: DownloadJob[]): Promise<void> {
+    const snapshot = JSON.stringify(jobs, null, 2);
+    const temporary = `${this.filePath}.tmp`;
+    await fs.writeFile(temporary, snapshot, 'utf8');
+    await fs.rename(temporary, this.filePath);
   }
 }

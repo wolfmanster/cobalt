@@ -154,8 +154,12 @@ test('search, author pagination, fullscreen swipe, and scroll restoration', asyn
   await authorButton.click();
   const detail = page.getByRole('region', { name: '山间来信的已下载推文' });
   await detail.waitFor();
-  await detail.getByRole('navigation', { name: '浏览结果分页' }).getByRole('button', { name: '下一页' }).click();
+  const nextPage = detail.getByRole('navigation', { name: '浏览结果分页' }).getByRole('button', { name: '下一页' });
+  // Give WebKit time to position the pagination in the nested author scroller before a touch.
+  await nextPage.scrollIntoViewIfNeeded();
+  await nextPage.tap();
   await detail.getByText('第 2 / 2 页').waitFor();
+  await detail.getByText('风景记录 0', { exact: true }).waitFor();
   assert.equal(await search.inputValue(), '山间');
   await page.getByRole('button', { name: '返回作者列表', exact: true }).click();
   assert.equal(await search.inputValue(), '山间');

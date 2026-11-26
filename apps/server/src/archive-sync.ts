@@ -4,7 +4,7 @@ import path from 'node:path';
 import express, { type Express } from 'express';
 import { z } from 'zod';
 import { ArchiveError, normalizeCategoryName, type CategoryStore } from './categories.js';
-import { mediaContentType } from './media-stream.js';
+import { archiveMediaPath, mediaContentType } from './media-stream.js';
 import type { JobStore } from './store.js';
 import type { DownloadJob, MediaItem } from './types.js';
 
@@ -43,7 +43,6 @@ export function registerArchiveSync(app: Express, store: JobStore, categories: C
   const fingerprints = new Map<string, { key: string; value: Promise<Fingerprint> }>();
   const byHash = new Map<string, Fingerprint>();
   const uploads = new Map<string, Promise<unknown>>();
-  const archiveRoot = path.resolve(store.mediaDir) + path.sep;
   let commitChain = Promise.resolve<unknown>(undefined);
 
   async function inspect(file: string) {
@@ -82,9 +81,29 @@ export function registerArchiveSync(app: Express, store: JobStore, categories: C
     return value;
   }
 
-  function existingMedia(media: MediaItem) {
-    const file = media.localPath && path.resolve(store.dataDir, media.localPath);
-    return file && file.startsWith(archiveRoot) ? inspect(file) : Promise.resolve(undefined);
+  async function collectMedia(jobs: DownloadJob[]) {
+    const available = new Map<string, { job: DownloadJob; item: MediaItem; fingerprint: Fingerprint }>();
+    let expected = 0;
+    for (const job of jobs) {
+      const hashes = new Set<string>();
+      let missing = job.unavailableMedia ?? 0;
+      for (const item of job.media) {
+        const file = archiveMediaPath(store.dataDir, store.mediaDir, item.localPath);
+        const fingerprint = file ? await inspect(file) : undefined;
+        if (!fingerprint || (item.size !== undefined && item.size !== fingerprint.size)) {
+          missing++;
+          continue;
+        }
+        hashes.add(fingerprint.sha256);
+        if (!available.has(fingerprint.sha256)) available.set(fingerprint.sha256, { job, item, fingerprint });
+      }
+      expected = Math.max(expected, hashes.size + missing);
+    }
+    return { available, expected };
+  }
+
+  function completedJobs(tweetId: string) {
+    return store.list().filter((job) => job.tweetId === tweetId && job.status === 'completed');
   }
 
   async function known(hash: string): Promise<Fingerprint | undefined> {
@@ -119,25 +138,19 @@ export function registerArchiveSync(app: Express, store: JobStore, categories: C
     }
     const posts = [];
     for (const [tweetId, jobs] of grouped) {
-      const media = new Map<string, ManifestMedia>();
-      let missing = 0;
-      for (const job of jobs) {
-        for (const { localPath, sourceUrl: _source, ...item } of job.media) {
-          const identity = await existingMedia({ ...item, localPath, sourceUrl: '' });
-          if (!identity) { missing++; continue; }
-          if (media.has(identity.sha256)) continue;
-          const previewUrl = '/api/jobs/' + encodeURIComponent(job.id) + '/media/' + encodeURIComponent(item.id);
-          media.set(identity.sha256, {
-            ...item, size: identity.size, sha256: identity.sha256, chunkHashes: identity.chunkHashes,
-            contentType: mediaContentType(item.contentType, item.filename),
-            previewUrl, downloadUrl: previewUrl + '?download=1',
-          });
-        }
-      }
-      const { importedRevision: _revision, unavailableMedia, ...job } = jobs[0]!;
+      const { available, expected } = await collectMedia(jobs);
+      const media: ManifestMedia[] = [...available.values()].map(({ job, item: { localPath: _file, sourceUrl: _source, ...item }, fingerprint }) => {
+        const previewUrl = '/api/jobs/' + encodeURIComponent(job.id) + '/media/' + encodeURIComponent(item.id);
+        return {
+          ...item, size: fingerprint.size, sha256: fingerprint.sha256, chunkHashes: fingerprint.chunkHashes,
+          contentType: mediaContentType(item.contentType, item.filename),
+          previewUrl, downloadUrl: previewUrl + '?download=1',
+        };
+      });
+      const { importedRevision: _revision, ...job } = jobs[0]!;
       const post = {
-        ...job, media: [...media.values()], archived: true,
-        unavailableMedia: Math.max(unavailableMedia ?? 0, missing),
+        ...job, media, archived: true,
+        unavailableMedia: Math.max(0, expected - media.length),
         categoryIds: (assignments.get(tweetId) ?? []).sort(),
       };
       posts.push({ ...post, version: sha256(JSON.stringify(post)) });
@@ -244,38 +257,32 @@ export function registerArchiveSync(app: Express, store: JobStore, categories: C
       if (avatar && !/^https:\/\/pbs\.twimg\.com\//i.test(avatar)) input.metadata.avatarUrl = '';
     }
     const commit = commitChain.catch(() => undefined).then(async () => {
-      const current = store.findByTweetId(input.tweetId);
-      if (current && ['queued', 'resolving', 'downloading'].includes(current.status)) {
+      if (store.findActiveByTweetId(input.tweetId)) {
         throw new ArchiveError('同一帖子正在服务器下载，稍后会继续合并', 409);
       }
-      const existing = store.list().filter((job) => job.tweetId === input.tweetId && job.status === 'completed');
+      const existing = completedJobs(input.tweetId);
       const job = existing[0];
-      if (job && input.importRevision && job.importedRevision === input.importRevision) return { id: job.id };
-      const knownHashes = new Set<string>();
-      for (const existingJob of existing) {
-        for (const media of existingJob.media) {
-          const fingerprint = await existingMedia(media);
-          if (fingerprint) knownHashes.add(fingerprint.sha256);
-        }
-      }
-      const media = [...(job?.media ?? [])];
+      const { available, expected } = await collectMedia(existing);
+      const verified = new Map([...available].map(([hash, { fingerprint }]) => [hash, fingerprint]));
+      const media = [...available.values()].map((entry) => entry.job === job ? entry.item : { ...entry.item, id: randomUUID() });
+      const incoming = new Set<string>();
       for (const item of input.media) {
-        if (knownHashes.has(item.sha256)) continue;
-        const fingerprint = await known(item.sha256);
+        const prior = verified.get(item.sha256);
+        const fingerprint = prior ?? await known(item.sha256);
         if (!fingerprint || fingerprint.size !== item.size) throw new ArchiveError('请先传输原文件', 409);
-        knownHashes.add(item.sha256);
+        incoming.add(item.sha256);
+        if (prior) continue;
+        verified.set(item.sha256, fingerprint);
         const { sha256: _sha, ...fields } = item;
         media.push({ ...fields, id: randomUUID(), downloadedBytes: item.size, totalBytes: item.size,
           sourceUrl: '', localPath: path.relative(store.dataDir, fingerprint.file) });
       }
+      // Missing legacy entries have no hash. Use the largest reported total and credit every verified original.
+      const unavailableMedia = Math.max(0, Math.max(expected, incoming.size + input.unavailableMedia) - media.length);
+      if (job && input.importRevision && job.importedRevision === input.importRevision &&
+          (job.unavailableMedia ?? 0) === unavailableMedia &&
+          media.length === job.media.length && media.every((item, index) => item === job.media[index])) return { id: job.id };
       await categories.mergeImported(input.tweetId, input.categories);
-      const latest = store.findByTweetId(input.tweetId);
-      if (latest && ['queued', 'resolving', 'downloading'].includes(latest.status)) {
-        throw new ArchiveError('同一帖子正在服务器下载，稍后会继续合并', 409);
-      }
-      if (latest?.status === 'completed' && latest.id !== job?.id) {
-        throw new ArchiveError('服务器归档刚刚更新，稍后会继续合并', 409);
-      }
       const canonicalUrl = 'https://x.com/i/status/' + input.tweetId;
       const now = new Date().toISOString();
       const createdAt = job && Date.parse(job.createdAt) < Date.parse(input.createdAt) ? job.createdAt : input.createdAt;
@@ -285,14 +292,26 @@ export function registerArchiveSync(app: Express, store: JobStore, categories: C
         canonicalUrl: job?.canonicalUrl ?? canonicalUrl, status: 'completed', progress: 100,
         attempts: job?.attempts ?? 0, metadata: job?.metadata ?? input.metadata, media, createdAt,
         completedAt, updatedAt: now, importedRevision: input.importRevision,
-        unavailableMedia: input.unavailableMedia,
+        unavailableMedia,
       };
-      store.set(merged);
-      await store.flush();
+      await store.setPersisted(merged, () => {
+        if (store.findActiveByTweetId(input.tweetId)) {
+          throw new ArchiveError('同一帖子正在服务器下载，稍后会继续合并', 409);
+        }
+        const latest = store.findByTweetId(input.tweetId);
+        if (latest?.status === 'completed' && latest !== job) {
+          throw new ArchiveError('服务器归档刚刚更新，稍后会继续合并', 409);
+        }
+      });
       notify();
       return { id: merged.id };
     });
     commitChain = commit;
     res.json(await commit);
   }));
+
+  return async function needsMediaRecovery(tweetId: string) {
+    const { available, expected } = await collectMedia(completedJobs(tweetId));
+    return !available.size || available.size < expected;
+  };
 }

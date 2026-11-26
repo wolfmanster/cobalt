@@ -69,7 +69,18 @@ export async function createApp(options: {
     options.insecureLoopback ?? process.env.ARCHIVE_INSECURE_LOOPBACK === '1');
 
   const notify = () => queue.emit('change');
-  registerArchiveSync(app, store, categories, notify);
+  const needsMediaRecovery = registerArchiveSync(app, store, categories, notify);
+
+  function enqueueDownload(tweetId: string, sourceUrl: string, canonicalUrl: string) {
+    const now = new Date().toISOString();
+    const job: DownloadJob = {
+      id: randomUUID(), tweetId, sourceUrl, canonicalUrl, status: 'queued',
+      progress: 0, media: [], attempts: 0, createdAt: now, updatedAt: now,
+    };
+    store.set(job);
+    queue.enqueue(job.id);
+    return job;
+  }
 
   app.get('/api/health', async (_req, res) => {
     const cobaltUrl = (process.env.COBALT_URL ?? 'http://127.0.0.1:9000').replace(/\/$/, '');
@@ -206,7 +217,7 @@ export async function createApp(options: {
     }
   });
 
-  app.post('/api/jobs', (req, res) => {
+  app.post('/api/jobs', async (req, res) => {
     const result = z.object({ urls: z.array(z.string()).min(1).max(200) }).safeParse(req.body);
     if (!result.success) return res.status(400).json({ error: '请提供 1–200 条帖子链接' });
 
@@ -220,27 +231,16 @@ export async function createApp(options: {
         const parsed = parseXPostUrl(sourceUrl);
         if (seen.has(parsed.tweetId)) continue;
         seen.add(parsed.tweetId);
-        const existing = store.findByTweetId(parsed.tweetId);
+        const existing = store.findActiveByTweetId(parsed.tweetId) ?? store.findByTweetId(parsed.tweetId);
         if (existing) {
-          duplicates.push(existing);
-          continue;
+          const recover = existing.status === 'completed' && await needsMediaRecovery(parsed.tweetId);
+          const latest = store.findActiveByTweetId(parsed.tweetId) ?? store.findByTweetId(parsed.tweetId);
+          if (!recover || latest !== existing) {
+            duplicates.push(latest ?? existing);
+            continue;
+          }
         }
-        const now = new Date().toISOString();
-        const job: DownloadJob = {
-          id: randomUUID(),
-          tweetId: parsed.tweetId,
-          sourceUrl: sourceUrl.trim(),
-          canonicalUrl: parsed.canonicalUrl,
-          status: 'queued',
-          progress: 0,
-          media: [],
-          attempts: 0,
-          createdAt: now,
-          updatedAt: now,
-        };
-        store.set(job);
-        queue.enqueue(job.id);
-        created.push(job);
+        created.push(enqueueDownload(parsed.tweetId, sourceUrl.trim(), parsed.canonicalUrl));
       } catch (error) {
         rejected.push({ url: sourceUrl, error: error instanceof Error ? error.message : '链接无效' });
       }
@@ -259,8 +259,19 @@ export async function createApp(options: {
     return res.json(publicJob(store.get(id)!));
   });
 
-  app.post('/api/jobs/:id/retry', (req, res) => {
+  app.post('/api/jobs/:id/retry', async (req, res, next) => {
     const id = String(req.params.id);
+    const job = store.get(id);
+    if (job && store.findActiveByTweetId(job.tweetId)) return res.status(409).json({ error: '该帖子正在下载' });
+    if (job?.status === 'completed') {
+      const archived = store.findByTweetId(job.tweetId);
+      try {
+        if (archived && await needsMediaRecovery(job.tweetId) && !store.findActiveByTweetId(job.tweetId) &&
+            store.findByTweetId(job.tweetId) === archived) {
+          return res.json(publicJob(enqueueDownload(archived.tweetId, archived.sourceUrl, archived.canonicalUrl)));
+        }
+      } catch (error) { return next(error); }
+    }
     if (!queue.retry(id)) return res.status(409).json({ error: '该任务无法重试' });
     return res.json(publicJob(store.get(id)!));
   });

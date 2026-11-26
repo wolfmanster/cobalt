@@ -2,6 +2,7 @@ import { Capacitor } from '@capacitor/core';
 
 export const isNativeAndroid = Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android';
 export const remoteOrigin = isNativeAndroid ? localStorage.getItem('archive-remote-origin') ?? '' : '';
+export const archiveSessionKey = 'archive-device:' + remoteOrigin;
 
 /** Room, download folder, X login, system back, and share import stay on Android. */
 export const usesLocalArchive = isNativeAndroid && !remoteOrigin;

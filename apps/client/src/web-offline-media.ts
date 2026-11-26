@@ -1,6 +1,7 @@
 import { readOffline, writeOffline } from './offline-db';
 import { ArchiveHttpError } from './archive-transport';
 import type { SyncMedia } from './archive-catalog';
+import { archiveSessionKey } from './platform';
 
 export type OfflineFile = {
   offset: number; size: number; chunkSize: number; contentType: string; filename: string;
@@ -8,6 +9,7 @@ export type OfflineFile = {
 
 export async function webCopy(media: SyncMedia, chunkSize: number, signal: AbortSignal) {
   const key = media.sha256;
+  const device = localStorage.getItem(archiveSessionKey);
   let file = await readOffline<OfflineFile>('files', key);
   let offset = file?.size === media.size && file.chunkSize === chunkSize ? file.offset : 0;
   while (offset < media.size) {
@@ -18,7 +20,7 @@ export async function webCopy(media: SyncMedia, chunkSize: number, signal: Abort
       signal: AbortSignal.any?.([signal, AbortSignal.timeout(60_000)]) ?? signal,
     });
     if (response.status === 401) {
-      window.dispatchEvent(new Event('archive-session-expired'));
+      if (!signal.aborted && device === localStorage.getItem(archiveSessionKey)) window.dispatchEvent(new Event('archive-session-expired'));
       throw new ArchiveHttpError(401, '请重新登录归档账号');
     }
     if (response.status !== 206 || response.headers.get('Content-Range') !== 'bytes ' + offset + '-' + end + '/' + media.size) {
@@ -33,10 +35,10 @@ export async function webCopy(media: SyncMedia, chunkSize: number, signal: Abort
     file = { offset: end + 1, size: media.size, chunkSize, contentType: media.contentType ?? 'application/octet-stream', filename: media.filename };
     const partKey = key + '/' + Math.floor(offset / chunkSize);
     try {
-      await writeOffline([['chunks', partKey, new Blob([bytes])], ['files', key, file]]);
+      await writeOffline([['chunks', partKey, new Blob([bytes])], ['files', key, file]], signal);
     } catch (error) {
       if (error instanceof DOMException && error.name === 'QuotaExceededError') throw error;
-      await writeOffline([['chunks', partKey, bytes], ['files', key, file]]);
+      await writeOffline([['chunks', partKey, bytes], ['files', key, file]], signal);
     }
     offset = file.offset;
   }

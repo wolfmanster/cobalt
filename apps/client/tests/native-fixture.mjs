@@ -109,6 +109,38 @@ export function installNativeFixture(options = {}) {
     openMedia: () => ({}),
     removeListener: ({ callbackId }) => { listeners.delete(callbackId); return {}; },
   };
+  if (options.remoteArchive) {
+    const origin = 'https://archive.example.test';
+    const device = { id: 'device-1', name: '测试设备', expiresAt: Date.now() + 60_000 };
+    localStorage.setItem('archive-remote-origin', origin);
+    localStorage.setItem('archive-device:' + origin, device.id);
+    const hash = 'a'.repeat(64);
+    const post = { ...makeJob(1), version: 'post-1', categoryIds: [], media: [{ ...media[0], sha256: hash, chunkHashes: [hash] }] };
+    const catalog = { version: 'archive-1', posts: [post], categories: [], chunkSize: 2097152 };
+    let copied = false;
+    let importAttempts = 0;
+    const uri = 'content://test/offline-copy';
+    const replies = {
+      '/api/account': { device, devices: [device] },
+      '/api/sync': catalog,
+      '/api/health': { ok: true, cobalt: true },
+      '/api/jobs': { jobs: [post], historyTotal: 1, completedToday: 0 },
+      '/api/tweet-categories': { categories: [], allTotal: 1, uncategorizedTotal: 1 },
+    };
+    Object.assign(implementations, {
+      remoteRequest: ({ path }) => ({ status: 200, data: replies[path.split('?')[0]] ?? {} }),
+      watchArchive: () => ({}),
+      loadCatalog: () => ({}),
+      saveCatalog: () => ({}),
+      findCopies: () => ({ copies: copied ? { [hash]: uri } : {} }),
+      saveCopy: () => { copied = true; return { uri }; },
+      importArchive: () => {
+        importAttempts++;
+        if (importAttempts === 1) throw new Error('模拟导入请求失败');
+        return { merged: [post.tweetId], missing: [], permissions: [], failed: [{ tweetId: '1990000000000000911', message: '模拟单条导入失败' }] };
+      },
+    });
+  }
   window.CapacitorCustomPlatform = { name: 'android' };
   window.Capacitor = {
     PluginHeaders: [{ name: 'LocalArchive', methods: [

@@ -18,6 +18,7 @@ import java.io.FileNotFoundException
 import java.io.InputStream
 import java.io.RandomAccessFile
 import java.security.MessageDigest
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
@@ -54,18 +55,32 @@ internal class SharedArchive(private val context: Context) {
         val previous = dao.archiveImports(server).associateBy { it.jobId }
         val localCategories = dao.listTweetCategories()
         val categoryNames = localCategories.associate { it.id to it.name }
+        val failed = JSONArray()
+        fun recordFailure(error: Exception, tweetId: String? = null) {
+            if (error is CancellationException || (error is ArchiveHttpException && error.status == 401)) throw error
+            failed.put(JSONObject().put("tweetId", tweetId).put("message", error.message ?: "旧下载导入失败"))
+        }
         for (job in dao.legacyDownloads()) {
             currentCoroutineContext().ensureActive()
             val record = previous[job.id]
             if (record != null && (!retry || (record.missing == "[]" && record.permissions == "[]"))) continue
-            val names = dao.tweetCategoryAssignments(listOf(job.tweetId)).mapNotNull { categoryNames[it.categoryId] }.distinct()
-            importPost(server, job, names)
+            try {
+                val names = dao.tweetCategoryAssignments(listOf(job.tweetId)).mapNotNull { categoryNames[it.categoryId] }.distinct()
+                importPost(server, job, names)
+            } catch (error: Exception) {
+                recordFailure(error, job.tweetId)
+            }
         }
         if (CATEGORY_STEP !in previous) {
-            for (names in localCategories.filter { it.tweetCount == 0 }.map { it.name }.chunked(500)) {
-                network.json(server, "POST", "/api/import/categories", JSONObject().put("categories", JSONArray(names)))
+            try {
+                for (names in localCategories.filter { it.tweetCount == 0 }.map { it.name }.chunked(500)) {
+                    currentCoroutineContext().ensureActive()
+                    network.json(server, "POST", "/api/import/categories", JSONObject().put("categories", JSONArray(names)))
+                }
+                dao.saveArchiveImport(ArchiveImportEntity(server, CATEGORY_STEP, "", "[]", "[]"))
+            } catch (error: Exception) {
+                recordFailure(error)
             }
-            dao.saveArchiveImport(ArchiveImportEntity(server, CATEGORY_STEP, "", "[]", "[]"))
         }
         val records = dao.archiveImports(server).filter { it.jobId != CATEGORY_STEP }
         fun issues(select: (ArchiveImportEntity) -> String) = JSONArray().also { result ->
@@ -76,7 +91,7 @@ internal class SharedArchive(private val context: Context) {
             }
         }
         JSONObject().put("merged", JSONArray(records.map { it.tweetId }.distinct()))
-            .put("missing", issues { it.missing }).put("permissions", issues { it.permissions })
+            .put("missing", issues { it.missing }).put("permissions", issues { it.permissions }).put("failed", failed)
     }
 
     private suspend fun importPost(server: String, job: JobEntity, categoryNames: List<String>) {

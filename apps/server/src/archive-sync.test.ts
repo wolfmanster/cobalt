@@ -4,9 +4,14 @@ import fs from 'node:fs/promises';
 import type { Server } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { resolveMedia } from './cobalt.js';
 import { createApp, type RunningApp } from './http-api.js';
+import { fetchPostMetadata } from './metadata.js';
 import type { DownloadJob } from './types.js';
+
+vi.mock('./cobalt.js', () => ({ resolveMedia: vi.fn() }));
+vi.mock('./metadata.js', () => ({ fetchPostMetadata: vi.fn() }));
 
 const chunk = 2 * 1024 * 1024;
 const sha = (bytes: Buffer | string) => createHash('sha256').update(bytes).digest('hex');
@@ -62,7 +67,7 @@ async function put(token: string, bytes: Buffer, hash: string, offset: number, s
     { method: 'PUT', headers: { 'Content-Type': 'application/octet-stream' }, body: new Uint8Array(bytes) }, token);
 }
 
-async function merge(token: string, tweetId: string, contents: Buffer[], categories: string[], missing = 0) {
+function importRequest(tweetId: string, contents: Buffer[], categories: string[], missing = 0) {
   const body = {
     tweetId, createdAt: date, completedAt: date, categories, unavailableMedia: missing,
     media: contents.map((bytes, index) => ({
@@ -70,7 +75,11 @@ async function merge(token: string, tweetId: string, contents: Buffer[], categor
     })),
     metadata: { authorName: '作者', username: 'author', userId: '42', avatarUrl: '', text: '原帖', language: 'zh', publishedAt: date },
   };
-  const result = await api('/import/posts', { method: 'POST', body: JSON.stringify({ ...body, importRevision: sha(JSON.stringify(body)) }) }, token);
+  return { method: 'POST', body: JSON.stringify({ ...body, importRevision: sha(JSON.stringify(body)) }) };
+}
+
+async function merge(token: string, tweetId: string, contents: Buffer[], categories: string[], missing = 0) {
+  const result = await api('/import/posts', importRequest(tweetId, contents, categories, missing), token);
   expect(result.status).toBe(200);
   return result.json() as Promise<{ id: string }>;
 }
@@ -81,6 +90,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.unstubAllGlobals();
   await stop();
   await fs.rm(dataDir, { recursive: true, force: true });
 });
@@ -180,5 +190,93 @@ describe('shared archive HTTP API', () => {
       expect(history.jobs.map((item: DownloadJob) => item.status).sort()).toEqual(['canceled', 'completed', 'downloading']);
       expect(app.categories.assignmentsFor(['1'])).toEqual({ '1': [category.id] });
     } finally { await reader.cancel(); }
+  });
+
+  it('publishes an imported post only after persistence and survives a concurrent retry and restart', async () => {
+    const { token } = await login('Android');
+    const bytes = Buffer.from('durable original');
+    expect((await put(token, bytes, sha(bytes), 0, bytes.length)).status).toBe(200);
+    const input = importRequest('501', [bytes], []);
+    const temporary = path.join(dataDir, 'jobs.json.tmp');
+    await fs.mkdir(temporary);
+    try {
+      expect((await api('/import/posts', input, token)).status).toBe(500);
+      const failed = await (await api('/sync', {}, token)).json();
+      expect(failed.posts).toEqual([]);
+    } finally { await fs.rmdir(temporary); }
+
+    const retries = await Promise.all([api('/import/posts', input, token), api('/import/posts', input, token)]);
+    expect(retries.map((reply) => reply.status)).toEqual([200, 200]);
+    const imported = await retries[0]!.json();
+    expect(await retries[1]!.json()).toEqual(imported);
+    await stop();
+    await start();
+    const restored = await (await api('/sync', {}, token)).json();
+    expect(restored.posts).toMatchObject([{ id: imported.id, tweetId: '501', media: [{ sha256: sha(bytes) }] }]);
+  });
+
+  it('credits verified originals against missing counts from incomplete imports', async () => {
+    const { token } = await login('Android');
+    const files = ['first', 'second', 'third'].map((text) => Buffer.from(text));
+    for (const bytes of files) expect((await put(token, bytes, sha(bytes), 0, bytes.length)).status).toBe(200);
+
+    await merge(token, '502', files.slice(0, 2), []);
+    await merge(token, '502', [], [], 2);
+    await merge(token, '503', files.slice(0, 1), [], 2);
+    await merge(token, '503', files.slice(0, 2), [], 1);
+    const partial = await (await api('/sync', {}, token)).json();
+    expect(partial.posts.map((post: DownloadJob) => [post.tweetId, post.media.length, post.unavailableMedia]))
+      .toEqual([['502', 2, 0], ['503', 2, 1]]);
+
+    await merge(token, '503', files.slice(2), []);
+    const complete = await (await api('/sync', {}, token)).json();
+    expect(complete.posts.map((post: DownloadJob) => [post.tweetId, post.media.length, post.unavailableMedia]))
+      .toEqual([['502', 2, 0], ['503', 3, 0]]);
+  });
+
+  it('recovers missing originals through submission and retry while keeping the existing archive', async () => {
+    const { token } = await login('Android');
+    const importedTweet = '1990000000000000504';
+    const staleTweet = '1990000000000000505';
+    const imported = await merge(token, importedTweet, [], ['旧分类'], 1);
+    const stale = addJob(staleTweet);
+    app.store.update(stale.id, { media: [{ id: 'lost', kind: 'image', filename: 'lost.png', sourceUrl: '',
+      downloadedBytes: 3, size: 3, localPath: 'media/lost.png' }] });
+    const originalFetch = globalThis.fetch;
+    const bytes = Buffer.from('recovered');
+    vi.stubGlobal('fetch', (input: string | URL | Request, init?: RequestInit) => input.toString().startsWith('https://media.example/')
+      ? Promise.resolve(new Response(bytes, { headers: { 'content-type': 'image/png', 'content-length': String(bytes.length) } }))
+      : originalFetch(input, init));
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    vi.mocked(fetchPostMetadata).mockImplementation(async () => {
+      await gate;
+      return { authorName: '作者', username: 'author', userId: '42', avatarUrl: '', text: '原帖', language: 'zh', publishedAt: date };
+    });
+    vi.mocked(resolveMedia).mockImplementation(async (_url, tweetId) => [{ id: 'original', kind: 'image', filename: 'original.png',
+      sourceUrl: 'https://media.example/' + tweetId, downloadedBytes: 0 }]);
+
+    const submission = { method: 'POST', body: JSON.stringify({ urls: ['https://x.com/i/status/' + importedTweet] }) };
+    try {
+      const submitted = await (await api('/jobs', submission, token)).json();
+      expect(submitted.created).toMatchObject([{ tweetId: importedTweet, status: 'resolving' }]);
+      const repeated = await (await api('/jobs', submission, token)).json();
+      expect(repeated.duplicates).toMatchObject([{ id: submitted.created[0].id }]);
+      expect((await api('/jobs/' + imported.id + '/retry', { method: 'POST' }, token)).status).toBe(409);
+      const retry = await api('/jobs/' + stale.id + '/retry', { method: 'POST' }, token);
+      expect(retry.status).toBe(200);
+      expect(await retry.json()).toMatchObject({ tweetId: staleTweet, status: 'resolving' });
+      expect(app.store.get(imported.id)?.status).toBe('completed');
+      expect(app.store.get(stale.id)?.status).toBe('completed');
+    } finally { release(); }
+
+    await vi.waitFor(async () => {
+      const manifest = await (await api('/sync', {}, token)).json();
+      expect(manifest.posts).toMatchObject([importedTweet, staleTweet].map((tweetId) => ({ tweetId, unavailableMedia: 0, media: [{ sha256: sha(bytes) }] })));
+      expect(manifest.posts[0].categoryIds).toHaveLength(1);
+    });
+    const complete = await (await api('/jobs', submission, token)).json();
+    expect(complete.created).toEqual([]);
+    expect(complete.duplicates).toHaveLength(1);
   });
 });

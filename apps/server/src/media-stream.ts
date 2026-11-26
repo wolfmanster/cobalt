@@ -18,6 +18,12 @@ export interface ByteRange {
   end: number;
 }
 
+export function archiveMediaPath(dataDir: string, mediaDir: string, localPath: string | undefined) {
+  if (!localPath) return undefined;
+  const file = path.resolve(dataDir, localPath);
+  return file.startsWith(path.resolve(mediaDir) + path.sep) ? file : undefined;
+}
+
 export function contentDispositionAttachment(filename: string): string {
   const cleaned = filename.replace(/[\r\n"]/g, '');
   const ascii = [...cleaned].map((char) => {
@@ -72,9 +78,8 @@ export async function streamJobMedia(req: Request, res: Response, input: {
     res.status(404).json({ error: '媒体尚不可用' });
     return;
   }
-  const filePath = path.resolve(input.dataDir, media.localPath);
-  const mediaRoot = path.resolve(input.mediaDir);
-  if (!filePath.startsWith(`${mediaRoot}${path.sep}`)) {
+  const filePath = archiveMediaPath(input.dataDir, input.mediaDir, media.localPath);
+  if (!filePath) {
     res.status(404).json({ error: '媒体文件不存在' });
     return;
   }

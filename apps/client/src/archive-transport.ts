@@ -1,11 +1,12 @@
 import { LocalArchive } from './nativeArchive';
-import { isNativeAndroid, remoteOrigin } from './platform';
+import { archiveSessionKey, isNativeAndroid, remoteOrigin } from './platform';
 
 export class ArchiveHttpError extends Error {
   constructor(readonly status: number, message: string) { super(message); }
 }
 
 export async function remoteRequest<T>(url: string, options: RequestInit = {}, origin = remoteOrigin): Promise<T> {
+  const device = localStorage.getItem(archiveSessionKey);
   let status: number;
   let data: { error?: string };
   if (isNativeAndroid) {
@@ -22,7 +23,8 @@ export async function remoteRequest<T>(url: string, options: RequestInit = {}, o
     data = await response.json().catch(() => ({}));
   }
   if (status < 200 || status >= 300) {
-    if (status === 401 && url !== '/api/account/login') window.dispatchEvent(new Event('archive-session-expired'));
+    if (status === 401 && url !== '/api/account/login' && !options.signal?.aborted &&
+        device === localStorage.getItem(archiveSessionKey)) window.dispatchEvent(new Event('archive-session-expired'));
     throw new ArchiveHttpError(status, data.error ?? '归档请求失败（HTTP ' + status + '）');
   }
   return data as T;
